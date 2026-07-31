@@ -92,7 +92,7 @@ impl<'a, IF: Interface, T: Register + Read + FromRaw> Accessor<'a, IF, T> {
 impl<'a, IF: Interface, T: Register + Clear + ToRaw> Accessor<'a, IF, T> {
     pub fn clear_value(&mut self, value: T) -> Result<(), Error<IF>> {
         self.interface
-            .write_register(T::ADDRESS, value.to_raw(), T::LENGTH)
+            .write_register(T::ADDRESS, T::LENGTH, value.to_raw())
             .map_err(Error::Interface)
     }
 }
@@ -100,7 +100,7 @@ impl<'a, IF: Interface, T: Register + Clear + ToRaw> Accessor<'a, IF, T> {
 impl<'a, IF: Interface, T: Register + Write + ToRaw> Accessor<'a, IF, T> {
     pub fn write_value(&mut self, value: T) -> Result<(), Error<IF>> {
         self.interface
-            .write_register(T::ADDRESS, value.to_raw(), T::LENGTH)
+            .write_register(T::ADDRESS, T::LENGTH, value.to_raw())
             .map_err(Error::Interface)
     }
 }
@@ -110,7 +110,7 @@ impl<'a, IF: Interface, T: Register + Write + ToRaw + Default> Accessor<'a, IF, 
         let mut value = T::default();
         f(&mut value);
         self.interface
-            .write_register(T::ADDRESS, value.to_raw(), T::LENGTH)
+            .write_register(T::ADDRESS, T::LENGTH, value.to_raw())
             .map_err(Error::Interface)
     }
 }
@@ -124,7 +124,7 @@ impl<'a, IF: Interface, T: Register + Read + Write + FromRaw + ToRaw> Accessor<'
         let mut value = T::from_raw(raw_value);
         f(&mut value);
         self.interface
-            .write_register(T::ADDRESS, value.to_raw(), T::LENGTH)
+            .write_register(T::ADDRESS, T::LENGTH, value.to_raw())
             .map_err(Error::Interface)
     }
 }
@@ -232,7 +232,7 @@ macro_rules! byte_access {
         impl<'a, IF: Interface> Accessor<'a, IF, $name> {
             pub fn clear_bytes(&mut self, value: $type) -> Result<(), Error<IF>> {
                 self.interface
-                    .write_register($name::ADDRESS, value.into(), $name::LENGTH)
+                    .write_register($name::ADDRESS, $name::LENGTH, value.into())
                     .map_err(Error::Interface)
             }
         }
@@ -241,7 +241,7 @@ macro_rules! byte_access {
         impl<'a, IF: Interface> Accessor<'a, IF, $name> {
             pub fn write_bytes(&mut self, value: $type) -> Result<(), Error<IF>> {
                 self.interface
-                    .write_register($name::ADDRESS, value.into(), $name::LENGTH)
+                    .write_register($name::ADDRESS, $name::LENGTH, value.into())
                     .map_err(Error::Interface)
             }
         }

@@ -40,9 +40,6 @@ mod headers {
     pub const SHORT_WRITE: u8 = 0b1000_0000;
     pub const FULL_READ: u16 = 0b0100_0000_0000_0000;
     pub const FULL_WRITE: u16 = 0b1100_0000_0000_0000;
-    pub const FULL_MODIFY_1: u16 = 0b1100_0000_0000_0001;
-    pub const FULL_MODIFY_2: u16 = 0b1100_0000_0000_0010;
-    pub const FULL_MODIFY_4: u16 = 0b1100_0000_0000_0011;
 }
 
 #[allow(async_fn_in_trait)]
@@ -67,26 +64,8 @@ pub trait Interface {
     fn write_register(
         &mut self,
         addr: FullAddress,
-        value: u64,
         length: usize,
-    ) -> Result<(), Self::Error>;
-
-    // TODO: generalize over primitive type
-    fn modify_1(&mut self, addr: FullAddress, and_mask: u8, or_mask: u8)
-    -> Result<(), Self::Error>;
-
-    fn modify_2(
-        &mut self,
-        addr: FullAddress,
-        and_mask: u16,
-        or_mask: u16,
-    ) -> Result<(), Self::Error>;
-
-    fn modify_4(
-        &mut self,
-        addr: FullAddress,
-        and_mask: u32,
-        or_mask: u32,
+        value: u64,
     ) -> Result<(), Self::Error>;
 }
 
@@ -257,8 +236,8 @@ impl<SPI: SpiDevice, RST: OutputPin, IRQ: InputPin + Wait, DELAY: DelayNs> Inter
     fn write_register(
         &mut self,
         addr: FullAddress,
-        value: u64,
         length: usize,
+        value: u64,
     ) -> Result<(), Self::Error> {
         assert!(length <= 8);
         let header = (headers::FULL_WRITE | addr.0).to_be_bytes();
@@ -269,47 +248,5 @@ impl<SPI: SpiDevice, RST: OutputPin, IRQ: InputPin + Wait, DELAY: DelayNs> Inter
         self.spi_dev
             .write(&buf[..header.len() + length])
             .map_err(SpiInterfaceError::Spi)
-    }
-
-    fn modify_1(
-        &mut self,
-        addr: FullAddress,
-        and_mask: u8,
-        or_mask: u8,
-    ) -> Result<(), Self::Error> {
-        let header = (headers::FULL_MODIFY_1 | addr.0).to_be_bytes();
-        let mut buf = [0u8; 4];
-        buf[0..2].copy_from_slice(&header);
-        buf[2] = and_mask;
-        buf[3] = or_mask;
-        self.spi_dev.write(&buf).map_err(SpiInterfaceError::Spi)
-    }
-
-    fn modify_2(
-        &mut self,
-        addr: FullAddress,
-        and_mask: u16,
-        or_mask: u16,
-    ) -> Result<(), Self::Error> {
-        let header = (headers::FULL_MODIFY_2 | addr.0).to_be_bytes();
-        let mut buf = [0u8; 6];
-        buf[0..2].copy_from_slice(&header);
-        buf[2..4].copy_from_slice(&and_mask.to_le_bytes());
-        buf[4..6].copy_from_slice(&or_mask.to_le_bytes());
-        self.spi_dev.write(&buf).map_err(SpiInterfaceError::Spi)
-    }
-
-    fn modify_4(
-        &mut self,
-        addr: FullAddress,
-        and_mask: u32,
-        or_mask: u32,
-    ) -> Result<(), Self::Error> {
-        let header = (headers::FULL_MODIFY_4 | addr.0).to_be_bytes();
-        let mut buf = [0u8; 10];
-        buf[0..2].copy_from_slice(&header);
-        buf[2..6].copy_from_slice(&and_mask.to_le_bytes());
-        buf[6..10].copy_from_slice(&or_mask.to_le_bytes());
-        self.spi_dev.write(&buf).map_err(SpiInterfaceError::Spi)
     }
 }
