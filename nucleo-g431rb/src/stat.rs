@@ -9,6 +9,12 @@ pub struct Stats {
     max: f32,
 }
 
+impl Default for Stats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Format for Stats {
     fn format(&self, f: defmt::Formatter) {
         defmt::write!(

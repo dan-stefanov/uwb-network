@@ -139,7 +139,6 @@ pub enum DeviceError {
     ResetTimeout,
     SpiNotReady,
     WrongDevice,
-    UnexpectedOptValue,
     PllLockTimeout,
     RxCalibrationTimeout,
     RxCalibrationFailure,
@@ -410,15 +409,6 @@ impl From<InnerState> for State {
         match value {
             InnerState::Reset => State::Reset,
             InnerState::Idle(_) => State::Idle,
-        }
-    }
-}
-
-impl InnerState {
-    fn is_idle(&self) -> bool {
-        match self {
-            InnerState::Idle(_) => true,
-            _ => false,
         }
     }
 }
@@ -997,7 +987,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
     async fn get_extended_address(
         &mut self,
     ) -> Result<ExtendedAddress, Error<Self::IoError, Self::DevError>> {
-        if !self.state.is_idle() {
+        if !matches!(self.state, InnerState::Idle(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
         }
 
@@ -1010,7 +1000,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         &mut self,
         value: ExtendedAddress,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        if !self.state.is_idle() {
+        if !matches!(self.state, InnerState::Idle(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
         }
         let mut ral = self.interface.ral();
@@ -1021,7 +1011,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
     async fn get_pan_address(
         &mut self,
     ) -> Result<(PanId, ShortAddress), Error<Self::IoError, Self::DevError>> {
-        if !self.state.is_idle() {
+        if !matches!(self.state, InnerState::Idle(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
         }
         let reg = self.interface.ral().panadr().read()?;
@@ -1033,7 +1023,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         pan_id: PanId,
         short_addr: ShortAddress,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        if !self.state.is_idle() {
+        if !matches!(self.state, InnerState::Idle(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
         }
         let mut ral = self.interface.ral();
@@ -1070,7 +1060,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
     }
 
     async fn get_timestamp(&mut self) -> Result<Instant, Error<Self::IoError, Self::DevError>> {
-        if !self.state.is_idle() {
+        if !matches!(self.state, InnerState::Idle(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
         }
 
@@ -1081,7 +1071,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         &mut self,
         psdu: &[u8],
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        if !self.state.is_idle() {
+        if !matches!(self.state, InnerState::Idle(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
         }
 
@@ -1095,7 +1085,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         &mut self,
         psdu: &mut [u8],
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        if !self.state.is_idle() {
+        if !matches!(self.state, InnerState::Idle(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
         }
 
@@ -1110,7 +1100,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         length: u16,
         start_at: Instant,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        if !self.state.is_idle() {
+        if !matches!(self.state, InnerState::Idle(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
         }
 
@@ -1152,7 +1142,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         start_at: Instant,
         rx_timeout: Duration,
     ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
-        if !self.state.is_idle() {
+        if !matches!(self.state, InnerState::Idle(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
         }
 
