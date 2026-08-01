@@ -26,7 +26,11 @@ const TX_CONFIG: phy::TxConfig = phy::TxConfig {
     phr_ranging_flag: false,
 };
 
-const SHR_DURATION: Duration = IDLE_CONFIG.shr_duration(TX_CONFIG.preamble_length);
+const SHR_DURATION: Duration = phy::shr_duration(
+    IDLE_CONFIG.preamble_code.prf(),
+    IDLE_CONFIG.sfd_type,
+    TX_CONFIG.preamble_length,
+);
 
 pub async fn initiator<PHY>(phy: &mut PHY)
 where

@@ -917,9 +917,12 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         // TODO: check RX frame processing according to SYS_CFG.FAST_AAT
 
         // DW3000 UM, 8.2.7.2
-        let sfd_timeout = config.rx_preamble_length_max.as_symbols() + 1
-            - u16::from(self.config.pac.as_symbols())
-            + config.sfd_type.symbol_length();
+        let sfd_timeout = {
+            let max_preamble_length = config.rx_preamble_length_max.as_symbols();
+            let sfd_length: u16 = config.sfd_type.symbol_length().into();
+            let pac_size: u16 = self.config.pac.as_symbols().into();
+            core::cmp::max(max_preamble_length, pac_size) - pac_size + sfd_length + 1
+        };
 
         let channel_config = ChannelConfig {
             channel: self.config.channel,

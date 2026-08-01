@@ -21,14 +21,6 @@ pub enum Prf {
     Mhz64,
 }
 
-// See IEEE 802.15.4-2020, Table 15-5
-pub const fn preamble_symbol_duration(prf: Prf) -> time::Duration {
-    match prf {
-        Prf::Mhz16 => time::Duration::CHIP.mul_u32(496),
-        Prf::Mhz64 => time::Duration::CHIP.mul_u32(508),
-    }
-}
-
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -63,10 +55,6 @@ impl PreambleCode {
             PreambleCode::Code11 => Prf::Mhz64, // 123 chip code
             PreambleCode::Code12 => Prf::Mhz64, // 123 chip code
         }
-    }
-
-    pub const fn symbol_duration(self) -> time::Duration {
-        preamble_symbol_duration(self.prf())
     }
 }
 
@@ -106,7 +94,7 @@ pub enum SfdType {
 
 impl SfdType {
     /// Length of SFD in preamble symbols
-    pub const fn symbol_length(self) -> u16 {
+    pub const fn symbol_length(self) -> u8 {
         match self {
             SfdType::Sfd0 => 8,
             SfdType::Sfd2 => 8,
@@ -119,31 +107,6 @@ impl SfdType {
 pub enum BitRate {
     Kbs850,
     Kbs6810,
-}
-
-impl BitRate {
-    pub const fn psdu_symbol_duration(self) -> time::Duration {
-        // See IEEE802.15.4-2020 table 15.3
-        let chips_per_symbol = match self {
-            BitRate::Kbs850 => 512,
-            BitRate::Kbs6810 => 64,
-        };
-        time::Duration::CHIP.mul_u32(chips_per_symbol)
-    }
-
-    pub const fn phr_duration(self) -> time::Duration {
-        const PHR_BITS: u32 = 18;
-        self.psdu_symbol_duration().mul_u32(PHR_BITS)
-    }
-
-    pub const fn psdu_duration(self, length: u16) -> time::Duration {
-        const RS_IN_BLOCK_SIZE: u32 = 330;
-        const RS_PARITY_SIZE: u32 = 48;
-        let in_bit_length = length as u32 * 8;
-        let block_count = in_bit_length.div_ceil(RS_IN_BLOCK_SIZE);
-        let out_bit_length = in_bit_length + block_count * RS_PARITY_SIZE;
-        self.psdu_symbol_duration().mul_u32(out_bit_length)
-    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -226,16 +189,6 @@ pub struct Config {
     pub auto_ack: Option<AutoAckConfig>,
     // TODO: add phr_data_rate, a.k.a. phyHrpUwbPhrDataRate,
     // TODO: add optional FCS correction
-}
-
-impl Config {
-    pub const fn shr_duration(self, preamble_length: PreambleLength) -> time::Duration {
-        let preamble_symbol_duration = self.preamble_code.symbol_duration();
-        let sync_length = preamble_length.as_symbols();
-        let sfd_length = self.sfd_type.symbol_length();
-        let shr_length = sync_length + sfd_length;
-        preamble_symbol_duration.mul_u32(shr_length as u32)
-    }
 }
 
 // TODO: make presets for IEEE operation parameter sets, see 15.7
@@ -436,4 +389,46 @@ pub trait Phy {
         start_at: Self::Instant,
         rx_timeout: time::Duration,
     ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>>;
+}
+
+// See IEEE 802.15.4-2020, Table 15-5
+pub const fn preamble_symbol_duration(prf: Prf) -> time::Duration {
+    match prf {
+        Prf::Mhz16 => time::Duration::CHIP.mul_u32(496),
+        Prf::Mhz64 => time::Duration::CHIP.mul_u32(508),
+    }
+}
+
+pub const fn psdu_symbol_duration(bit_rate: BitRate) -> time::Duration {
+    // See IEEE802.15.4-2020 table 15.3
+    match bit_rate {
+        BitRate::Kbs850 => time::Duration::CHIP.mul_u32(512),
+        BitRate::Kbs6810 => time::Duration::CHIP.mul_u32(64),
+    }
+}
+
+pub const fn shr_duration(
+    prf: Prf,
+    sfd_type: SfdType,
+    preamble_length: PreambleLength,
+) -> time::Duration {
+    let preamble_symbol_duration = preamble_symbol_duration(prf);
+    let sync_length = preamble_length.as_symbols();
+    let sfd_length = sfd_type.symbol_length();
+    let shr_length = sync_length + sfd_length as u16;
+    preamble_symbol_duration.mul_u32(shr_length as u32)
+}
+
+pub const fn phr_duration(bit_rate: BitRate) -> time::Duration {
+    const PHR_BITS: u32 = 18;
+    psdu_symbol_duration(bit_rate).mul_u32(PHR_BITS)
+}
+
+pub const fn psdu_duration(bit_rate: BitRate, length: u16) -> time::Duration {
+    const RS_IN_BLOCK_SIZE: u32 = 330;
+    const RS_PARITY_SIZE: u32 = 48;
+    let in_bit_length = length as u32 * 8;
+    let block_count = in_bit_length.div_ceil(RS_IN_BLOCK_SIZE);
+    let out_bit_length = in_bit_length + block_count * RS_PARITY_SIZE;
+    psdu_symbol_duration(bit_rate).mul_u32(out_bit_length)
 }
