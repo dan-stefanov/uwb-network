@@ -20,6 +20,7 @@ const IDLE_CONFIG: phy::Config = phy::Config {
     phr_format: PhrFormat::Standard,
     rx_preamble_length_max: PreambleLength::Symbols64,
     preamble_timeout: None,
+    correct_tx_fcs: true,
     auto_ack: None,
 };
 

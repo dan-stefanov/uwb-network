@@ -395,6 +395,7 @@ async fn check_dev_id<IF: Interface>(
 struct IdleData {
     ack_preamble_length: PreambleLength,
     phr_format: PhrFormat,
+    correct_tx_fcs: bool,
     sys_cfg_short: regs::SysCfgShort,
 }
 
@@ -954,6 +955,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
 
         let mut ral = self.interface.ral();
         ral.sys_cfg().write(|w| {
+            w.set_dis_fcs_tx(!config.correct_tx_fcs);
             w.set_phr_mode(match config.phr_format {
                 PhrFormat::Standard => regs::PhrMode::StandardFrame,
                 PhrFormat::Long => regs::PhrMode::LongFrame,
@@ -987,6 +989,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         self.state = InnerState::Idle(IdleData {
             ack_preamble_length,
             phr_format: config.phr_format,
+            correct_tx_fcs: config.correct_tx_fcs,
             sys_cfg_short,
         });
 
@@ -1117,8 +1120,8 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
             )));
         }
 
-        if usize::from(length) < FCS_LENGTH {
-            return Err(Error::Operation(OpError::IncorrectTxFrame));
+        if idle_data.correct_tx_fcs && length < FCS_LENGTH {
+            return Err(Error::Operation(OpError::TxLengthLessThanFcs(length)));
         }
 
         self.set_tx_config(config, length)?;
@@ -1166,8 +1169,8 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
             )));
         }
 
-        if usize::from(length) < FCS_LENGTH {
-            return Err(Error::Operation(OpError::IncorrectTxFrame));
+        if idle_data.correct_tx_fcs && length < FCS_LENGTH {
+            return Err(Error::Operation(OpError::TxLengthLessThanFcs(length)));
         }
 
         self.set_tx_config(config, length)?;

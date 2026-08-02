@@ -8,6 +8,11 @@ const RX_DELAY: Duration = Duration::RSTU.mul_u32(1000);
 const RX_TIMEOUT: Duration = Duration::RSTU.mul_u32(1_000_000);
 
 const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
+const PHY_CONFIG: phy::Config = {
+    let mut config = phy::Config::new();
+    config.correct_tx_fcs = true;
+    config
+};
 
 pub async fn initiator<PHY>(phy: &mut PHY)
 where
@@ -18,7 +23,7 @@ where
     info!("Run as initiator");
 
     info!("Configure");
-    phy.start(phy::Config::default()).await.unwrap();
+    phy.start(PHY_CONFIG).await.unwrap();
 
     let psdu = {
         let mut psdu = Vec::<u8, { MAX_PSDU_SIZE }>::new();
@@ -53,7 +58,7 @@ where
     info!("Run as responder");
 
     info!("Configure");
-    phy.start(phy::Config::default()).await.unwrap();
+    phy.start(PHY_CONFIG).await.unwrap();
 
     loop {
         let mut psdu = Vec::<u8, { MAX_PSDU_SIZE }>::new();
@@ -69,7 +74,7 @@ where
                 psdu.resize(report.length.into(), 0).unwrap();
                 phy.read_rx_buffer(psdu.as_mut_slice()).await.unwrap();
 
-                info!("RX frame: {=[u8]:02x}", psdu.as_slice());
+                info!("RX frame FCS: {}, data: {=[u8]:02x}", report.fcs_good, psdu.as_slice());
             }
             Ok(None) => {
                 info!("RX frame timeout, try again");

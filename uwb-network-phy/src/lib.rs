@@ -10,7 +10,7 @@ pub mod functional_tests;
 
 use bitflags::bitflags;
 
-pub const FCS_LENGTH: usize = 2; // TODO: make u16
+pub const FCS_LENGTH: u16 = 2;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -203,23 +203,32 @@ pub struct Config {
     pub phr_format: PhrFormat,
     pub rx_preamble_length_max: PreambleLength,
     pub preamble_timeout: Option<time::Duration>,
+    /// Replace last FCS_LENGH octets with calculated FCS
+    pub correct_tx_fcs: bool,
 
     pub auto_ack: Option<AutoAckConfig>,
     // TODO: add phr_data_rate, a.k.a. phyHrpUwbPhrDataRate,
     // TODO: add optional FCS correction
 }
 
-// TODO: make presets for IEEE operation parameter sets, see 15.7
-impl Default for Config {
-    fn default() -> Self {
+impl Config {
+    // TODO: make presets for IEEE operation parameter sets, see 15.7
+    pub const fn new() -> Self {
         Self {
             preamble_code: PreambleCode::Code9,
             sfd_type: SfdType::Sfd0,
             phr_format: PhrFormat::Standard,
             rx_preamble_length_max: PreambleLength::Symbols4096,
             preamble_timeout: None,
+            correct_tx_fcs: false,
             auto_ack: None,
         }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -298,10 +307,10 @@ pub enum OpError {
     StartInstantPassed,
     PreambleTimeout,
     FrameTimeout,
-    IncorrectTxFrame,
     RxUnderflow,
     RxOverflow,
     TxLengthAbovePhrFormat(u16, PhrFormat),
+    TxLengthLessThanFcs(u16),
 }
 
 #[derive(Debug)]

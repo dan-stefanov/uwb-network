@@ -31,7 +31,7 @@ fn build_data_frame(psdu: &mut Vec<u8, { MAX_PSDU_SIZE }>, seq_num: u8, payload:
     //               \________________________ src_addr_mode = Short (10)
 
     let header_len = 2 + 1 + 2 + 2 + 2; // FC + Seq + DstPAN + DstAddr + SrcAddr
-    let total = header_len + payload.len() + phy::FCS_LENGTH;
+    let total = header_len + payload.len() + usize::from(phy::FCS_LENGTH);
 
     let mut buf = [0u8; MAX_PSDU_SIZE];
     buf[0] = fc as u8;
@@ -47,7 +47,7 @@ fn build_data_frame(psdu: &mut Vec<u8, { MAX_PSDU_SIZE }>, seq_num: u8, payload:
 
     // Length written to buffer excludes FCS (hardware auto-appends)
     psdu.clear();
-    psdu.extend_from_slice(&buf[..total - phy::FCS_LENGTH])
+    psdu.extend_from_slice(&buf[..total - usize::from(phy::FCS_LENGTH)])
         .unwrap();
 }
 
@@ -60,7 +60,11 @@ where
     info!("Run as initiator");
 
     info!("Configure");
-    phy.start(phy::Config::default()).await.unwrap();
+    let config = phy::Config {
+        correct_tx_fcs: true,
+        ..Default::default()
+    };
+    phy.start(config).await.unwrap();
     phy.set_pan_address(PAN_ID, INITIATOR_ADDR).await.unwrap();
 
     let mut psdu = Vec::<u8, { MAX_PSDU_SIZE }>::new();
@@ -77,7 +81,7 @@ where
         let ack = phy
             .transmit_w4r(
                 phy::TxConfig::default(),
-                unwrap!(u16::try_from(psdu.len() + phy::FCS_LENGTH)),
+                unwrap!(u16::try_from(psdu.len() + usize::from(phy::FCS_LENGTH))),
                 timestamp + TX_DELAY,
                 ACK_TIMEOUT,
             )
@@ -109,9 +113,11 @@ where
     info!("Run as responder");
 
     info!("Configure");
-    let mut config = phy::Config::default();
-    config.auto_ack = Some(phy::AutoAckConfig::default());
-
+    let config = phy::Config {
+        correct_tx_fcs: true,
+        auto_ack: Some(phy::AutoAckConfig::default()),
+        ..Default::default()
+    };
     phy.start(config).await.unwrap();
     phy.set_pan_address(PAN_ID, RESPONDER_ADDR).await.unwrap();
 

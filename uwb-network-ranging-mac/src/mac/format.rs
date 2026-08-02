@@ -67,10 +67,11 @@ pub enum Address {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::MAX_PSDU_LENGTH;
     use crate::psdu::{PsduContainer, StaticPsdu};
     use core::num::NonZero;
     use nested_ie::rd_ie::RmSubPeriodUsage;
+
+    const MAX_PSDU_SIZE: usize = crate::phy::PhrFormat::Standard.max_psdu_length() as usize;
 
     #[test]
     fn beacon() {
@@ -91,7 +92,7 @@ mod test {
             first_rcm_slot: None,
         };
 
-        let mut psdu = StaticPsdu::<MAX_PSDU_LENGTH>::new();
+        let mut psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
 
         {
             let mut frame_builder =
