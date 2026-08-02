@@ -18,6 +18,7 @@ const IDLE_CONFIG: phy::Config = phy::Config {
     preamble_code: PreambleCode::Code9,
     sfd_type: SfdType::Sfd0,
     phr_format: PhrFormat::Standard,
+    high_phr_bit_rate: false,
     rx_preamble_length_max: PreambleLength::Symbols64,
     preamble_timeout: None,
     correct_tx_fcs: true,

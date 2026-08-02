@@ -960,6 +960,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
                 PhrFormat::Standard => regs::PhrMode::StandardFrame,
                 PhrFormat::Long => regs::PhrMode::LongFrame,
             });
+            w.set_phr_6m8(config.high_phr_bit_rate);
             w.set_cia_ipatov(true);
             w.set_cia_sts(false);
             w.set_rxwtoe(true); // Receive Wait Timeout Enable

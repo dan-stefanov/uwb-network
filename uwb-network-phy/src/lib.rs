@@ -201,13 +201,16 @@ pub struct Config {
     pub preamble_code: PreambleCode,
     pub sfd_type: SfdType,
     pub phr_format: PhrFormat,
+    /// Match PHR bit rate to the PSDU bit rate
+    ///
+    /// When cleared, use BitRate::Kbs6810 for any PSDU bit rate
+    pub high_phr_bit_rate: bool,
     pub rx_preamble_length_max: PreambleLength,
     pub preamble_timeout: Option<time::Duration>,
     /// Replace last FCS_LENGH octets with calculated FCS
     pub correct_tx_fcs: bool,
 
     pub auto_ack: Option<AutoAckConfig>,
-    // TODO: add phr_data_rate, a.k.a. phyHrpUwbPhrDataRate,
 }
 
 impl Config {
@@ -217,6 +220,7 @@ impl Config {
             preamble_code: PreambleCode::Code9,
             sfd_type: SfdType::Sfd0,
             phr_format: PhrFormat::Standard,
+            high_phr_bit_rate: false,
             rx_preamble_length_max: PreambleLength::Symbols4096,
             preamble_timeout: None,
             correct_tx_fcs: false,
