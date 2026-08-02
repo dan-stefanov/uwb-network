@@ -10,8 +10,6 @@ pub mod functional_tests;
 
 use bitflags::bitflags;
 
-/// IEEE802154 format
-pub const MAX_PSDU_LENGTH: usize = 127;
 pub const FCS_LENGTH: usize = 2; // TODO: make u16
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -111,6 +109,24 @@ pub enum BitRate {
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum PhrFormat {
+    /// Defined by IEEE 802.15.4, PSDU is 0-127 octets
+    Standard,
+    /// Defined by IEEE 802.15.8, PSDU is 0-1023 octets
+    Long,
+}
+
+impl PhrFormat {
+    pub const fn max_psdu_length(self) -> u16 {
+        match self {
+            PhrFormat::Standard => 127,
+            PhrFormat::Long => 1023,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PanId(u16);
 
 impl PanId {
@@ -184,8 +200,10 @@ impl Default for AutoAckConfig {
 pub struct Config {
     pub preamble_code: PreambleCode,
     pub sfd_type: SfdType,
+    pub phr_format: PhrFormat,
     pub rx_preamble_length_max: PreambleLength,
     pub preamble_timeout: Option<time::Duration>,
+
     pub auto_ack: Option<AutoAckConfig>,
     // TODO: add phr_data_rate, a.k.a. phyHrpUwbPhrDataRate,
     // TODO: add optional FCS correction
@@ -197,6 +215,7 @@ impl Default for Config {
         Self {
             preamble_code: PreambleCode::Code9,
             sfd_type: SfdType::Sfd0,
+            phr_format: PhrFormat::Standard,
             rx_preamble_length_max: PreambleLength::Symbols4096,
             preamble_timeout: None,
             auto_ack: None,
@@ -282,6 +301,7 @@ pub enum OpError {
     IncorrectTxFrame,
     RxUnderflow,
     RxOverflow,
+    TxLengthAbovePhrFormat(u16, PhrFormat),
 }
 
 #[derive(Debug)]
@@ -323,12 +343,6 @@ pub trait Phy {
     fn state(&self) -> State;
     async fn reset(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>>;
     async fn start(&mut self, config: Config) -> Result<(), Error<Self::IoError, Self::DevError>>;
-
-    // TODO: split essential and non-essential config
-    // async fn set_config(
-    //     &mut self,
-    //     config: Config,
-    // ) -> Result<(), Error<Self::IoError, Self::DevError>>;
 
     async fn get_extended_address(
         &mut self,

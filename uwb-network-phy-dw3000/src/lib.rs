@@ -12,8 +12,8 @@ mod ral;
 use crate::interface::Interface;
 /// Device specific data and methods
 use uwb_network_phy::{
-    BitRate, Config, Error, ExtendedAddress, FCS_LENGTH, FrameFilter, OpError, PanId, Phy,
-    PreambleCode, PreambleLength, Prf, RxReport, SfdType, ShortAddress, State, TxConfig,
+    BitRate, Config, Error, ExtendedAddress, FCS_LENGTH, FrameFilter, OpError, PanId, PhrFormat,
+    Phy, PreambleCode, PreambleLength, Prf, RxReport, SfdType, ShortAddress, State, TxConfig,
     preamble_symbol_duration, time,
 };
 
@@ -394,6 +394,7 @@ async fn check_dev_id<IF: Interface>(
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct IdleData {
     ack_preamble_length: PreambleLength,
+    phr_format: PhrFormat,
     sys_cfg_short: regs::SysCfgShort,
 }
 
@@ -953,6 +954,10 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
 
         let mut ral = self.interface.ral();
         ral.sys_cfg().write(|w| {
+            w.set_phr_mode(match config.phr_format {
+                PhrFormat::Standard => regs::PhrMode::StandardFrame,
+                PhrFormat::Long => regs::PhrMode::LongFrame,
+            });
             w.set_cia_ipatov(true);
             w.set_cia_sts(false);
             w.set_rxwtoe(true); // Receive Wait Timeout Enable
@@ -981,6 +986,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
 
         self.state = InnerState::Idle(IdleData {
             ack_preamble_length,
+            phr_format: config.phr_format,
             sys_cfg_short,
         });
 
@@ -1041,11 +1047,8 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         &mut self,
         value: Option<FrameFilter>,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        let sys_cfg_short = match &mut self.state {
-            InnerState::Idle(data) => &mut data.sys_cfg_short,
-            _ => {
-                return Err(Error::Operation(OpError::ProhibitedInCurrentState));
-            }
+        let InnerState::Idle(idle_data) = &mut self.state else {
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
         };
 
         let mut ral = self.interface.ral();
@@ -1057,8 +1060,8 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
             })?;
         }
 
-        sys_cfg_short.set_ffen(value.is_some());
-        ral.sys_cfg_short().write_value(*sys_cfg_short)?;
+        idle_data.sys_cfg_short.set_ffen(value.is_some());
+        ral.sys_cfg_short().write_value(idle_data.sys_cfg_short)?;
         Ok(())
     }
 
@@ -1103,8 +1106,15 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         length: u16,
         start_at: Instant,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Idle(_)) {
+        let InnerState::Idle(idle_data) = &self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+        };
+
+        if length > idle_data.phr_format.max_psdu_length() {
+            return Err(Error::Operation(OpError::TxLengthAbovePhrFormat(
+                length,
+                idle_data.phr_format,
+            )));
         }
 
         if usize::from(length) < FCS_LENGTH {
@@ -1145,8 +1155,15 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         start_at: Instant,
         rx_timeout: Duration,
     ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Idle(_)) {
+        let InnerState::Idle(idle_data) = &self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+        };
+
+        if length > idle_data.phr_format.max_psdu_length() {
+            return Err(Error::Operation(OpError::TxLengthAbovePhrFormat(
+                length,
+                idle_data.phr_format,
+            )));
         }
 
         if usize::from(length) < FCS_LENGTH {
@@ -1214,16 +1231,13 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         rx_start_at: Instant,
         rx_timeout: Duration,
     ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
-        let preamble_length = match &self.state {
-            InnerState::Idle(data) => data.ack_preamble_length,
-            _ => {
-                return Err(Error::Operation(OpError::ProhibitedInCurrentState));
-            }
+        let InnerState::Idle(idle_data) = &self.state else {
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
         };
 
         // Configure preamble_length, other fields has no effect on auto ack
         let tx_config = TxConfig {
-            preamble_length,
+            preamble_length: idle_data.ack_preamble_length,
             bit_rate: BitRate::Kbs850,
             phr_ranging_flag: false,
         };

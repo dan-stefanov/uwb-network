@@ -13,11 +13,13 @@ const RX_DELAY: Duration = Duration::RSTU.mul_u32(1000);
 const RX_TIMEOUT: Duration = Duration::RSTU.mul_u32(1_000_000);
 const ACK_TIMEOUT: Duration = Duration::RSTU.mul_u32(10_000);
 
+const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
+
 /// Build an IEEE 802.15.4 data frame (version 1) with ack request.
 ///
 /// Addressing with PAN ID compression (v1):
 ///   Dest PAN ID + Dest Short Addr + Src Short Addr (source PAN ID omitted)
-fn build_data_frame(psdu: &mut Vec<u8, { phy::MAX_PSDU_LENGTH }>, seq_num: u8, payload: &[u8]) {
+fn build_data_frame(psdu: &mut Vec<u8, { MAX_PSDU_SIZE }>, seq_num: u8, payload: &[u8]) {
     let fc: u16 = 0b10_01_10_000_1_1_0_0_001;
     //               |  |  |     | | | |   \__ frame_type = Data (001)
     //               |  |  |     | | | \______ security_enable = 0
@@ -31,7 +33,7 @@ fn build_data_frame(psdu: &mut Vec<u8, { phy::MAX_PSDU_LENGTH }>, seq_num: u8, p
     let header_len = 2 + 1 + 2 + 2 + 2; // FC + Seq + DstPAN + DstAddr + SrcAddr
     let total = header_len + payload.len() + phy::FCS_LENGTH;
 
-    let mut buf = [0u8; phy::MAX_PSDU_LENGTH];
+    let mut buf = [0u8; MAX_PSDU_SIZE];
     buf[0] = fc as u8;
     buf[1] = (fc >> 8) as u8;
     buf[2] = seq_num;
@@ -61,7 +63,7 @@ where
     phy.start(phy::Config::default()).await.unwrap();
     phy.set_pan_address(PAN_ID, INITIATOR_ADDR).await.unwrap();
 
-    let mut psdu = Vec::<u8, { phy::MAX_PSDU_LENGTH }>::new();
+    let mut psdu = Vec::<u8, { MAX_PSDU_SIZE }>::new();
 
     for seq in 0u8..100 {
         build_data_frame(&mut psdu, seq, &[0xDE, 0xAD, 0xBE, 0xEF]);
@@ -121,7 +123,7 @@ where
     phy.set_frame_filter(Some(filter)).await.unwrap();
 
     loop {
-        let mut psdu = Vec::<u8, { phy::MAX_PSDU_LENGTH }>::new();
+        let mut psdu = Vec::<u8, { MAX_PSDU_SIZE }>::new();
 
         info!("Wait for a data frame");
 

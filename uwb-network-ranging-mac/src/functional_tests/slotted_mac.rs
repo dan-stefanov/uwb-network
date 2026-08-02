@@ -1,7 +1,7 @@
 use crate::mac::format;
 use crate::phy;
 use crate::phy::time::Duration;
-use crate::phy::{BitRate, MAX_PSDU_LENGTH, PreambleCode, PreambleLength, SfdType};
+use crate::phy::{BitRate, PhrFormat, PreambleCode, PreambleLength, SfdType};
 use crate::psdu::{PsduContainer, StaticPsdu};
 use core::num::NonZero;
 use embassy_time::Timer;
@@ -12,9 +12,12 @@ const TURNAROUND_DURATION: Duration = Duration::RSTU.mul_u32(1000);
 
 const SLOT_COUNT: u8 = 5;
 
+const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
+
 const IDLE_CONFIG: phy::Config = phy::Config {
     preamble_code: PreambleCode::Code9,
     sfd_type: SfdType::Sfd0,
+    phr_format: PhrFormat::Standard,
     rx_preamble_length_max: PreambleLength::Symbols64,
     preamble_timeout: None,
     auto_ack: None,
@@ -44,7 +47,7 @@ where
     phy.start(IDLE_CONFIG).await.unwrap();
     assert_eq!(phy.state(), phy::State::Idle);
 
-    let mut beacon_psdu = StaticPsdu::<MAX_PSDU_LENGTH>::new();
+    let mut beacon_psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
     {
         use crate::phy::{PanId, ShortAddress};
         use format::Address;
@@ -88,7 +91,7 @@ where
             .unwrap();
     }
 
-    let mut slot_psdu = StaticPsdu::<MAX_PSDU_LENGTH>::new();
+    let mut slot_psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
     slot_psdu
         .set_from_slice(&[0xde, 0xad, 0xbe, 0xef, 0x10, 0x00, 0x00, 0x00, 0x00])
         .unwrap();
@@ -140,7 +143,7 @@ where
     assert_eq!(phy.state(), phy::State::Idle);
 
     loop {
-        let mut psdu = StaticPsdu::<MAX_PSDU_LENGTH>::new();
+        let mut psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
 
         info!("Wait for a beacon");
         let now = phy.get_timestamp().await.unwrap();

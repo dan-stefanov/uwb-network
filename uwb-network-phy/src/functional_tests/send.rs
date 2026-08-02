@@ -7,6 +7,8 @@ const TX_DELAY: Duration = Duration::RSTU.mul_u32(1000);
 const RX_DELAY: Duration = Duration::RSTU.mul_u32(1000);
 const RX_TIMEOUT: Duration = Duration::RSTU.mul_u32(1_000_000);
 
+const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
+
 pub async fn initiator<PHY>(phy: &mut PHY)
 where
     PHY: phy::Phy,
@@ -19,7 +21,7 @@ where
     phy.start(phy::Config::default()).await.unwrap();
 
     let psdu = {
-        let mut psdu = Vec::<u8, { phy::MAX_PSDU_LENGTH }>::new();
+        let mut psdu = Vec::<u8, { MAX_PSDU_SIZE }>::new();
         psdu.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef, 0x00, 0x00])
             .unwrap();
         psdu
@@ -54,7 +56,7 @@ where
     phy.start(phy::Config::default()).await.unwrap();
 
     loop {
-        let mut psdu = Vec::<u8, { phy::MAX_PSDU_LENGTH }>::new();
+        let mut psdu = Vec::<u8, { MAX_PSDU_SIZE }>::new();
 
         info!("Wait for a packet");
 
