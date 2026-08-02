@@ -24,9 +24,9 @@ heapless = { version = "0.9.2", default-features = false }
 static_cell = { version = "2.1.1" }
 libm = "0.2"
 
-uwb-network-phy = { version = "0.1.0", path = "../uwb-network-phy", features = ["defmt", "functional_tests"]}
-uwb-network-phy-dw3000 = { version = "0.1.0", path = "../uwb-network-phy-dw3000", features = ["defmt"]}
-uwb-network-ranging-mac = { version = "0.1.0", path = "../uwb-network-ranging-mac", features = ["defmt", "functional_tests"]}
+uwb-network-phy = { version = "0.1.0", path = "../../uwb-network-phy", features = ["defmt", "functional_tests"]}
+uwb-network-phy-dw3000 = { version = "0.1.0", path = "../../uwb-network-phy-dw3000", features = ["defmt"]}
+uwb-network-ranging-mac = { version = "0.1.0", path = "../../uwb-network-ranging-mac", features = ["defmt", "functional_tests"]}
 
 [profile.release]
 debug = 2
