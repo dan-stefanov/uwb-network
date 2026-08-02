@@ -5,18 +5,6 @@
 
 use core::fmt::{Debug, Display, LowerHex};
 
-#[cfg(feature = "defmt")]
-pub trait Format: defmt::Format {}
-
-#[cfg(feature = "defmt")]
-impl<T: defmt::Format> Format for T {}
-
-#[cfg(not(feature = "defmt"))]
-pub trait Format {}
-
-#[cfg(not(feature = "defmt"))]
-impl<T> Format for T {}
-
 #[collapse_debuginfo(yes)]
 macro_rules! assert {
     ($($x:tt)*) => {

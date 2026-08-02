@@ -54,6 +54,7 @@ fn build_data_frame(psdu: &mut Vec<u8, { MAX_PSDU_SIZE }>, seq_num: u8, payload:
 pub async fn initiator<PHY>(phy: &mut PHY)
 where
     PHY: phy::Phy,
+    PHY::Instant: defmt::Format,
     PHY::IoError: defmt::Format,
     PHY::DevError: defmt::Format,
 {
@@ -107,6 +108,7 @@ where
 pub async fn responder<PHY>(phy: &mut PHY)
 where
     PHY: phy::Phy,
+    PHY::Instant: defmt::Format,
     PHY::IoError: defmt::Format,
     PHY::DevError: defmt::Format,
 {

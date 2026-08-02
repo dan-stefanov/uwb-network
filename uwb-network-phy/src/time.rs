@@ -217,7 +217,6 @@ pub trait CyclicTimestamp:
     + ops::SubAssign<Duration>
     + Eq
     + core::fmt::Debug
-    + crate::fmt::Format
     + Copy
     + Sized
 {

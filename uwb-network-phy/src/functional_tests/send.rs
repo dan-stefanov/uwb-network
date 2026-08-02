@@ -17,6 +17,7 @@ const PHY_CONFIG: phy::Config = {
 pub async fn initiator<PHY>(phy: &mut PHY)
 where
     PHY: phy::Phy,
+    PHY::Instant: defmt::Format,
     PHY::IoError: defmt::Format,
     PHY::DevError: defmt::Format,
 {
@@ -52,6 +53,7 @@ where
 pub async fn responder<PHY>(phy: &mut PHY)
 where
     PHY: phy::Phy,
+    PHY::Instant: defmt::Format,
     PHY::IoError: defmt::Format,
     PHY::DevError: defmt::Format,
 {
