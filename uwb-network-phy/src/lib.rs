@@ -1,5 +1,8 @@
 #![cfg_attr(not(test), no_std)]
 
+use bitflags::bitflags;
+use core::num::NonZeroU16;
+
 // This mod MUST go first, so that the others see its macros.
 pub(crate) mod fmt;
 
@@ -7,8 +10,6 @@ pub mod time;
 
 #[cfg(feature = "functional_tests")]
 pub mod functional_tests;
-
-use bitflags::bitflags;
 
 pub const FCS_LENGTH: u16 = 2;
 
@@ -206,7 +207,12 @@ pub struct Config {
     /// When cleared, use BitRate::Kbs6810 for any PSDU bit rate
     pub high_phr_bit_rate: bool,
     pub rx_preamble_length_max: PreambleLength,
-    pub preamble_timeout: Option<time::Duration>,
+    /// Preamble hunting duration in symbols
+    ///
+    /// Implementation should hunt for preamble at least for this duration.
+    /// Once timeout has expired, implementation may stop reception to
+    /// save power.
+    pub preamble_timeout: Option<NonZeroU16>,
     /// Replace last FCS_LENGH octets with calculated FCS
     pub correct_tx_fcs: bool,
 
@@ -345,7 +351,6 @@ pub trait Phy {
     type IoError: core::fmt::Debug;
     type DevError: core::fmt::Debug;
 
-    const MAX_RX_PREAMBLE_TIMEOUT: time::Duration;
     const MAX_RX_FRAME_TIMEOUT: time::Duration;
 
     fn state(&self) -> State;

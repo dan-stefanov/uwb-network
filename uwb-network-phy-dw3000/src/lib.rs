@@ -1,5 +1,15 @@
 #![no_std]
 
+use core::num::NonZeroU16;
+use interface::Interface;
+use ral::regs::{DgcCfgLutData, DgcLutData, EventsLow as Events};
+use ral::{RegisterAccess, regs};
+use time::Duration;
+use uwb_network_phy::{
+    BitRate, Config, Error, ExtendedAddress, FCS_LENGTH, FrameFilter, OpError, PanId, PhrFormat,
+    Phy, PreambleCode, PreambleLength, Prf, RxReport, SfdType, ShortAddress, State, TxConfig, time,
+};
+
 // This mod MUST go first, so that the others see its macros.
 pub(crate) mod fmt;
 
@@ -8,18 +18,6 @@ mod otp;
 
 #[allow(dead_code)]
 mod ral;
-
-use crate::interface::Interface;
-/// Device specific data and methods
-use uwb_network_phy::{
-    BitRate, Config, Error, ExtendedAddress, FCS_LENGTH, FrameFilter, OpError, PanId, PhrFormat,
-    Phy, PreambleCode, PreambleLength, Prf, RxReport, SfdType, ShortAddress, State, TxConfig,
-    preamble_symbol_duration, time,
-};
-
-use crate::ral::regs::{DgcCfgLutData, DgcLutData, EventsLow as Events};
-use crate::ral::{RegisterAccess, regs};
-use time::Duration;
 
 // 124.8 MHZ system clock period
 const SYSTEM_TIME_UNIT: Duration = Duration::CHIP.mul_u32(4);
@@ -37,12 +35,6 @@ const PLL_LOCK_TIMEOUT_US: u32 = 150_000;
 const RX_CALIBRATION_TIMEOUT_US: u32 = 60_000;
 const RX_CALIBRATION_POLL_PERIOD_US: u32 = 20_000;
 
-const MAX_RX_PREAMBLE_TIMEOUT: Duration = {
-    let min_symbol_duration =
-        preamble_symbol_duration(Prf::Mhz16).min(preamble_symbol_duration(Prf::Mhz64));
-    let min_unit = min_symbol_duration.mul_u32(PreambleAcquisitionChunk::MIN.as_symbols() as u32);
-    min_unit.mul_u32((1u32 << 16) - 1)
-};
 const RX_FRAME_TIMEOUT_UNIT: Duration = Duration::CHIP.mul_u32(512);
 const MAX_RX_FRAME_TIMEOUT: Duration = RX_FRAME_TIMEOUT_UNIT.mul_u32((1u32 << 20) - 1);
 
@@ -788,21 +780,12 @@ impl<IF: Interface> Dw3000Phy<IF> {
 
     fn set_preamble_timeout(
         &mut self,
-        prf: Prf,
         pac: PreambleAcquisitionChunk,
-        timeout: Option<Duration>,
+        timeout: Option<NonZeroU16>,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
-        let preamble_toc: u16 = match timeout {
-            Some(duration) => {
-                assert!(duration <= Self::MAX_RX_PREAMBLE_TIMEOUT);
-                assert_ne!(duration, Duration::ZERO);
-                let chunk_size = pac.as_symbols();
-                let unit: Duration = preamble_symbol_duration(prf) * u32::from(chunk_size);
-                let count = duration.as_ticks().div_ceil(unit.as_ticks());
-                unwrap!(count.try_into())
-            }
-            None => 0,
-        };
+        let preamble_toc = timeout.map_or(0, |count| {
+            u16::from(count).div_ceil(pac.as_symbols().into())
+        });
         let mut ral = self.interface.ral();
         ral.pre_toc().write_bytes(preamble_toc)?;
         Ok(())
@@ -898,7 +881,6 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
     type IoError = IF::Error;
     type DevError = DeviceError;
 
-    const MAX_RX_PREAMBLE_TIMEOUT: Duration = MAX_RX_PREAMBLE_TIMEOUT;
     const MAX_RX_FRAME_TIMEOUT: Duration = MAX_RX_FRAME_TIMEOUT;
 
     fn state(&self) -> State {
@@ -973,11 +955,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         let sys_cfg_short = ral.sys_cfg_short().read()?;
 
         self.set_sfd_timeout(sfd_timeout)?;
-        self.set_preamble_timeout(
-            config.preamble_code.prf(),
-            self.config.pac,
-            config.preamble_timeout,
-        )?;
+        self.set_preamble_timeout(self.config.pac, config.preamble_timeout)?;
         self.configure_ack_response_time()?;
         self.interface.clear_all_events()?;
 
