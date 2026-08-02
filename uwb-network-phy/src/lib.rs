@@ -305,13 +305,8 @@ pub struct RxReport<T> {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OpError {
-    ProhibitedInCurrentState,
-    IncompatibleCode,
-    StartInstantPassed,
-    PreambleTimeout,
-    FrameTimeout,
-    RxUnderflow,
-    RxOverflow,
+    ProhibitedInCurrentState(State),
+    StartInstantPassed, // TODO: add timestamp data
     BufferAccessBeyondPhrFormat(usize, PhrFormat),
     TxLengthAbovePhrFormat(u16, PhrFormat),
     TxLengthLessThanFcs(u16),

@@ -1001,7 +1001,9 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         &mut self,
     ) -> Result<ExtendedAddress, Error<Self::IoError, Self::DevError>> {
         if !matches!(self.state, InnerState::Idle(_)) {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
         }
 
         let mut ral = self.interface.ral();
@@ -1014,7 +1016,9 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         value: ExtendedAddress,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         if !matches!(self.state, InnerState::Idle(_)) {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
         }
         let mut ral = self.interface.ral();
         ral.eui().write_bytes(value.as_u64())?;
@@ -1025,7 +1029,9 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         &mut self,
     ) -> Result<(PanId, ShortAddress), Error<Self::IoError, Self::DevError>> {
         if !matches!(self.state, InnerState::Idle(_)) {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
         }
         let reg = self.interface.ral().panadr().read()?;
         Ok((PanId::new(reg.pan_id()), ShortAddress::new(reg.shortaddr())))
@@ -1037,7 +1043,9 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         short_addr: ShortAddress,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         if !matches!(self.state, InnerState::Idle(_)) {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
         }
         let mut ral = self.interface.ral();
         ral.panadr().write(|w| {
@@ -1052,7 +1060,9 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         value: Option<FrameFilter>,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         let InnerState::Idle(idle_data) = &mut self.state else {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
         };
 
         let mut ral = self.interface.ral();
@@ -1071,7 +1081,9 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
 
     async fn get_timestamp(&mut self) -> Result<Instant, Error<Self::IoError, Self::DevError>> {
         if !matches!(self.state, InnerState::Idle(_)) {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
         }
 
         self.get_sys_timestamp()
@@ -1082,7 +1094,9 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         psdu: &[u8],
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         let InnerState::Idle(idle_data) = &self.state else {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
         };
 
         if psdu.len() > usize::from(idle_data.phr_format.max_psdu_length()) {
@@ -1102,7 +1116,9 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         psdu: &mut [u8],
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         let InnerState::Idle(idle_data) = &self.state else {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
         };
 
         if psdu.len() > usize::from(idle_data.phr_format.max_psdu_length()) {
@@ -1124,7 +1140,9 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         start_at: Instant,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         let InnerState::Idle(idle_data) = &self.state else {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
         };
 
         if length > idle_data.phr_format.max_psdu_length() {
@@ -1173,7 +1191,9 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         rx_timeout: Duration,
     ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
         let InnerState::Idle(idle_data) = &self.state else {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
         };
 
         if length > idle_data.phr_format.max_psdu_length() {
@@ -1249,7 +1269,9 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         rx_timeout: Duration,
     ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
         let InnerState::Idle(idle_data) = &self.state else {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
         };
 
         // Configure preamble_length, other fields has no effect on auto ack
