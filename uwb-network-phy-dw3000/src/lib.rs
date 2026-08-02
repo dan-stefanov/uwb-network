@@ -1080,11 +1080,17 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         &mut self,
         psdu: &[u8],
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Idle(_)) {
+        let InnerState::Idle(idle_data) = &self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+        };
+
+        if psdu.len() > usize::from(idle_data.phr_format.max_psdu_length()) {
+            return Err(Error::Operation(OpError::BufferAccessBeyondPhrFormat(
+                psdu.len(),
+                idle_data.phr_format,
+            )));
         }
 
-        // TODO: Check psdu length
         let mut ral = self.interface.ral();
         ral.tx_buffer().write_fast(psdu)?;
         Ok(())
@@ -1094,8 +1100,15 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         &mut self,
         psdu: &mut [u8],
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Idle(_)) {
+        let InnerState::Idle(idle_data) = &self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState));
+        };
+
+        if psdu.len() > usize::from(idle_data.phr_format.max_psdu_length()) {
+            return Err(Error::Operation(OpError::BufferAccessBeyondPhrFormat(
+                psdu.len(),
+                idle_data.phr_format,
+            )));
         }
 
         let mut ral = self.interface.ral();

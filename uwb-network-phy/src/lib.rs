@@ -208,7 +208,6 @@ pub struct Config {
 
     pub auto_ack: Option<AutoAckConfig>,
     // TODO: add phr_data_rate, a.k.a. phyHrpUwbPhrDataRate,
-    // TODO: add optional FCS correction
 }
 
 impl Config {
@@ -309,6 +308,7 @@ pub enum OpError {
     FrameTimeout,
     RxUnderflow,
     RxOverflow,
+    BufferAccessBeyondPhrFormat(usize, PhrFormat),
     TxLengthAbovePhrFormat(u16, PhrFormat),
     TxLengthLessThanFcs(u16),
 }
