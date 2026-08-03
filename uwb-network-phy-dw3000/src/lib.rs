@@ -4,11 +4,7 @@ use core::num::NonZeroU16;
 use interface::Interface;
 use ral::regs::{DgcCfgLutData, DgcLutData, EventsLow as Events};
 use ral::{RegisterAccess, regs};
-use time::Duration;
-use uwb_network_phy::{
-    BitRate, Error, FCS_LENGTH, OpError, PhrFormat, Phy, PreambleCode, PreambleLength, Prf,
-    RunConfig, RxReport, SfdType, State, TxConfig, time,
-};
+use uwb_network_phy::{self as phy, Error, OpError, time::Duration};
 
 // This mod MUST go first, so that the others see its macros.
 pub(crate) mod fmt;
@@ -24,7 +20,7 @@ const SYSTEM_TIME_UNIT: Duration = Duration::CHIP.mul_u32(4);
 // 31-bit system clock counter
 const SYSTEM_TIME_PERIOD: Duration = SYSTEM_TIME_UNIT.mul_u32(1u32 << 31);
 
-type Instant = time::Instant<{ SYSTEM_TIME_PERIOD.as_ticks() }>;
+type Instant = phy::time::Instant<{ SYSTEM_TIME_PERIOD.as_ticks() }>;
 
 // The following duration are measured on host side, but we use the same
 // Duration type for simplicity
@@ -222,7 +218,7 @@ impl<'a, IF: Interface> otp::OtpRead for OtpReader<'a, IF> {
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct RfConfig {
     pub channel: Channel,
-    pub prf: Prf,
+    pub prf: phy::Prf,
     pub pac: PreambleAcquisitionChunk,
     pub rx_ops: RxOps,
 }
@@ -230,16 +226,16 @@ struct RfConfig {
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct ChannelConfig {
     pub channel: Channel,
-    pub rx_code: PreambleCode,
-    pub tx_code: PreambleCode,
-    pub sfd_type: SfdType,
+    pub rx_code: phy::PreambleCode,
+    pub tx_code: phy::PreambleCode,
+    pub sfd_type: phy::SfdType,
 }
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct RxInfo {
     pub frame_length: u16,
-    pub bit_rate: BitRate,
+    pub bit_rate: phy::BitRate,
     pub phr_ranging_flag: bool,
 }
 
@@ -281,6 +277,7 @@ impl<IF: Interface> InterfaceWrapper<IF> {
         self.0.clear_reset().map_err(Error::Interface)
     }
 
+    #[allow(dead_code)]
     fn wake_up(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
         self.0.wake_up().map_err(Error::Interface)
     }
@@ -383,14 +380,14 @@ async fn check_dev_id<IF: Interface>(
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum InnerState {
     Stopped,
-    Running(RunConfig),
+    Running(phy::RunConfig),
 }
 
-impl From<InnerState> for State {
+impl From<InnerState> for phy::State {
     fn from(value: InnerState) -> Self {
         match value {
-            InnerState::Stopped => State::Stopped,
-            InnerState::Running(_) => State::Running,
+            InnerState::Stopped => phy::State::Stopped,
+            InnerState::Running(_) => phy::State::Running,
         }
     }
 }
@@ -592,7 +589,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         })?;
 
         ral.dgc_cfg().write(|w| {
-            w.set_rx_tune_en(config.prf == Prf::Mhz64);
+            w.set_rx_tune_en(config.prf == phy::Prf::Mhz64);
             w.set_thr_64(0x32);
         })?;
 
@@ -716,8 +713,8 @@ impl<IF: Interface> Dw3000Phy<IF> {
                 Channel::Ch9 => regs::Channel::Channel9,
             });
             w.set_sfd_type(match config.sfd_type {
-                SfdType::Sfd0 => regs::SfdType::Ieee802154,
-                SfdType::Sfd2 => regs::SfdType::Ieee802154z,
+                phy::SfdType::Sfd0 => regs::SfdType::Ieee802154,
+                phy::SfdType::Sfd2 => regs::SfdType::Ieee802154z,
             });
             w.set_tx_pcode(config.tx_code.as_number());
             w.set_rx_pcode(config.rx_code.as_number());
@@ -727,7 +724,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
 
     fn set_tx_config(
         &mut self,
-        config: TxConfig,
+        config: phy::TxConfig,
         length: u16,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
         const MAX_FRAME_LENGTH: u16 = 1023;
@@ -740,15 +737,15 @@ impl<IF: Interface> Dw3000Phy<IF> {
         ral.tx_fctrl_short().write(|w| {
             w.set_txflen(length);
             w.set_txbr(match config.bit_rate {
-                BitRate::Kbs850 => regs::BitRate::Kbs850,
-                BitRate::Kbs6810 => regs::BitRate::Kbs6810,
+                phy::BitRate::Kbs850 => regs::BitRate::Kbs850,
+                phy::BitRate::Kbs6810 => regs::BitRate::Kbs6810,
             });
             w.set_tr(config.phr_ranging_flag);
             w.set_txpsr(match config.preamble_length {
-                PreambleLength::Symbols16 => regs::TxPreambleLength::Symbols16,
-                PreambleLength::Symbols64 => regs::TxPreambleLength::Symbols64,
-                PreambleLength::Symbols1024 => regs::TxPreambleLength::Symbols1024,
-                PreambleLength::Symbols4096 => regs::TxPreambleLength::Symbols4096,
+                phy::PreambleLength::Symbols16 => regs::TxPreambleLength::Symbols16,
+                phy::PreambleLength::Symbols64 => regs::TxPreambleLength::Symbols64,
+                phy::PreambleLength::Symbols1024 => regs::TxPreambleLength::Symbols1024,
+                phy::PreambleLength::Symbols4096 => regs::TxPreambleLength::Symbols4096,
             });
         })?;
 
@@ -783,7 +780,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         &mut self,
         timeout: Duration,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
-        assert!(timeout <= Self::MAX_RX_FRAME_TIMEOUT);
+        assert!(timeout <= MAX_RX_FRAME_TIMEOUT);
         const UNIT: Duration = RX_FRAME_TIMEOUT_UNIT;
         let counter = timeout.as_ticks().div_ceil(UNIT.as_ticks());
         assert!(counter < 1u64 << 20);
@@ -829,8 +826,8 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(RxInfo {
             frame_length: rx_info.rxflen(),
             bit_rate: match rx_info.rxbr() {
-                regs::BitRate::Kbs850 => BitRate::Kbs850,
-                regs::BitRate::Kbs6810 => BitRate::Kbs6810,
+                regs::BitRate::Kbs850 => phy::BitRate::Kbs850,
+                regs::BitRate::Kbs6810 => phy::BitRate::Kbs6810,
             },
             phr_ranging_flag: rx_info.rng(),
         })
@@ -855,6 +852,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(unwrap!(Instant::try_from_ticks(rx_time)))
     }
 
+    #[allow(dead_code)]
     fn get_coarse_rx_timestamp(&mut self) -> Result<Instant, Error<IF::Error, DeviceError>> {
         let mut ral = self.interface.ral();
         let sys_ticks_x2 = ral.rx_rawst().read_bytes()?;
@@ -864,14 +862,14 @@ impl<IF: Interface> Dw3000Phy<IF> {
     }
 }
 
-impl<IF: Interface> Phy for Dw3000Phy<IF> {
+impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
     type Instant = Instant;
     type IoError = IF::Error;
     type DevError = DeviceError;
 
     const MAX_RX_FRAME_TIMEOUT: Duration = MAX_RX_FRAME_TIMEOUT;
 
-    fn state(&self) -> State {
+    fn state(&self) -> phy::State {
         self.state.into()
     }
 
@@ -884,7 +882,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
 
     async fn start(
         &mut self,
-        run_config: RunConfig,
+        run_config: phy::RunConfig,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         // TODO: Check for updates at https://gist.github.com/egnor/455d510e11c22deafdec14b09da5bf54
         // TODO: check double buffer in SYS_CFG.DIS_DRXB
@@ -931,8 +929,8 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         ral.sys_cfg().write(|w| {
             w.set_dis_fcs_tx(!run_config.correct_tx_fcs);
             w.set_phr_mode(match run_config.phr_format {
-                PhrFormat::Standard => regs::PhrMode::StandardFrame,
-                PhrFormat::Long => regs::PhrMode::LongFrame,
+                phy::PhrFormat::Standard => regs::PhrMode::StandardFrame,
+                phy::PhrFormat::Long => regs::PhrMode::LongFrame,
             });
             w.set_phr_6m8(run_config.high_phr_bit_rate);
             w.set_cia_ipatov(true);
@@ -1008,7 +1006,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
 
     async fn transmit(
         &mut self,
-        config: TxConfig,
+        config: phy::TxConfig,
         length: u16,
         start_at: Instant,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
@@ -1025,7 +1023,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
             )));
         }
 
-        if run_config.correct_tx_fcs && length < FCS_LENGTH {
+        if run_config.correct_tx_fcs && length < phy::FCS_LENGTH {
             return Err(Error::Operation(OpError::TxLengthLessThanFcs(length)));
         }
 
@@ -1060,7 +1058,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         &mut self,
         rx_start_at: Instant,
         rx_timeout: Duration,
-    ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
+    ) -> Result<Option<phy::RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
         if !matches!(self.state, InnerState::Running(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
@@ -1093,7 +1091,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         let rx_info = self.get_rx_info()?;
         let timestamp = self.get_fine_rx_timestamp()?;
 
-        Ok(Some(RxReport {
+        Ok(Some(phy::RxReport {
             bit_rate: rx_info.bit_rate,
             ranging_flag: rx_info.phr_ranging_flag,
             length: rx_info.frame_length,
