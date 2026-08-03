@@ -14,7 +14,7 @@ const SLOT_COUNT: u8 = 5;
 
 const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
 
-const IDLE_CONFIG: phy::Config = phy::Config {
+const RUN_CONFIG: phy::RunConfig = phy::RunConfig {
     preamble_code: PreambleCode::Code9,
     sfd_type: SfdType::Sfd0,
     phr_format: PhrFormat::Standard,
@@ -31,8 +31,8 @@ const TX_CONFIG: phy::TxConfig = phy::TxConfig {
 };
 
 const SHR_DURATION: Duration = phy::shr_duration(
-    IDLE_CONFIG.preamble_code.prf(),
-    IDLE_CONFIG.sfd_type,
+    RUN_CONFIG.preamble_code.prf(),
+    RUN_CONFIG.sfd_type,
     TX_CONFIG.preamble_length,
 );
 
@@ -46,8 +46,8 @@ where
     info!("Run as initiator");
 
     info!("Configure");
-    phy.start(IDLE_CONFIG).await.unwrap();
-    assert_eq!(phy.state(), phy::State::Idle);
+    phy.start(RUN_CONFIG).await.unwrap();
+    assert_eq!(phy.state(), phy::State::Running);
 
     let mut beacon_psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
     {
@@ -141,8 +141,8 @@ where
     info!("Run as responder");
 
     info!("Configure");
-    phy.start(IDLE_CONFIG).await.unwrap();
-    assert_eq!(phy.state(), phy::State::Idle);
+    phy.start(RUN_CONFIG).await.unwrap();
+    assert_eq!(phy.state(), phy::State::Running);
 
     loop {
         let mut psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();

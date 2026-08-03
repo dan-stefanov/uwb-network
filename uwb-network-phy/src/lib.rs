@@ -129,15 +129,15 @@ impl PhrFormat {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum State {
     /// Low power consumption, time is not kept
-    Reset,
+    Stopped,
     /// Moderate power consumption, precision time is kept
-    Idle,
+    Running,
 }
 
 // TODO: add XTAL trim option
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Config {
+pub struct RunConfig {
     pub preamble_code: PreambleCode,
     pub sfd_type: SfdType,
     pub phr_format: PhrFormat,
@@ -156,7 +156,7 @@ pub struct Config {
     pub correct_tx_fcs: bool,
 }
 
-impl Config {
+impl RunConfig {
     // TODO: make presets for IEEE operation parameter sets, see 15.7
     pub const fn new() -> Self {
         Self {
@@ -171,7 +171,7 @@ impl Config {
     }
 }
 
-impl Default for Config {
+impl Default for RunConfig {
     fn default() -> Self {
         Self::new()
     }
@@ -251,8 +251,11 @@ pub trait Phy {
     const MAX_RX_FRAME_TIMEOUT: time::Duration;
 
     fn state(&self) -> State;
-    async fn reset(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>>;
-    async fn start(&mut self, config: Config) -> Result<(), Error<Self::IoError, Self::DevError>>;
+    async fn stop(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>>;
+    async fn start(
+        &mut self,
+        config: RunConfig,
+    ) -> Result<(), Error<Self::IoError, Self::DevError>>;
 
     async fn get_timestamp(
         &mut self,

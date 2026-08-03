@@ -6,8 +6,8 @@ use ral::regs::{DgcCfgLutData, DgcLutData, EventsLow as Events};
 use ral::{RegisterAccess, regs};
 use time::Duration;
 use uwb_network_phy::{
-    BitRate, Config, Error, FCS_LENGTH, OpError, PhrFormat, Phy, PreambleCode, PreambleLength, Prf,
-    RxReport, SfdType, State, TxConfig, time,
+    BitRate, Error, FCS_LENGTH, OpError, PhrFormat, Phy, PreambleCode, PreambleLength, Prf,
+    RunConfig, RxReport, SfdType, State, TxConfig, time,
 };
 
 // This mod MUST go first, so that the others see its macros.
@@ -381,23 +381,16 @@ async fn check_dev_id<IF: Interface>(
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct IdleData {
-    phr_format: PhrFormat,
-    correct_tx_fcs: bool,
-}
-
-#[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum InnerState {
-    Reset,
-    Idle(IdleData),
+    Stopped,
+    Running(RunConfig),
 }
 
 impl From<InnerState> for State {
     fn from(value: InnerState) -> Self {
         match value {
-            InnerState::Reset => State::Reset,
-            InnerState::Idle(_) => State::Idle,
+            InnerState::Stopped => State::Stopped,
+            InnerState::Running(_) => State::Running,
         }
     }
 }
@@ -405,7 +398,7 @@ impl From<InnerState> for State {
 pub struct Dw3000Phy<IF> {
     interface: InterfaceWrapper<IF>,
     otp: OtpData,
-    config: DeviceConfig,
+    dev_config: DeviceConfig,
     state: InnerState,
 }
 
@@ -481,7 +474,7 @@ impl Default for DeviceConfig {
 impl<IF: Interface> Dw3000Phy<IF> {
     pub async fn init(
         interface: IF,
-        config: DeviceConfig,
+        dev_config: DeviceConfig,
     ) -> Result<Self, Error<IF::Error, DeviceError>> {
         let mut interface = InterfaceWrapper(interface);
         reset_power_up(&mut interface).await?;
@@ -492,8 +485,8 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(Self {
             interface,
             otp,
-            config,
-            state: InnerState::Reset,
+            dev_config,
+            state: InnerState::Stopped,
         })
     }
 
@@ -627,10 +620,10 @@ impl<IF: Interface> Dw3000Phy<IF> {
             Channel::Ch9 => 0x1C010034,
         })?;
         ral.tx_power().write(|w| {
-            w.set_data_pwr(self.config.tx_power.data.0);
-            w.set_phr_pwr(self.config.tx_power.phr.0);
-            w.set_shr_pwr(self.config.tx_power.shr.0);
-            w.set_sts_pwr(self.config.tx_power.sts.0);
+            w.set_data_pwr(self.dev_config.tx_power.data.0);
+            w.set_phr_pwr(self.dev_config.tx_power.phr.0);
+            w.set_shr_pwr(self.dev_config.tx_power.shr.0);
+            w.set_sts_pwr(self.dev_config.tx_power.sts.0);
         })?;
 
         Ok(())
@@ -882,13 +875,17 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         self.state.into()
     }
 
-    async fn reset(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>> {
+    // TODO: go to sleep instead of shutdown
+    async fn stop(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>> {
         self.shutdown()?;
-        self.state = InnerState::Reset;
+        self.state = InnerState::Stopped;
         Ok(())
     }
 
-    async fn start(&mut self, config: Config) -> Result<(), Error<Self::IoError, Self::DevError>> {
+    async fn start(
+        &mut self,
+        run_config: RunConfig,
+    ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         // TODO: Check for updates at https://gist.github.com/egnor/455d510e11c22deafdec14b09da5bf54
         // TODO: check double buffer in SYS_CFG.DIS_DRXB
         // TODO: check PHR data rate in SYS_CFG.PHR_6M8
@@ -897,24 +894,24 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
 
         // DW3000 UM, 8.2.7.2
         let sfd_timeout = {
-            let max_preamble_length = config.rx_preamble_length_max.as_symbols();
-            let sfd_length: u16 = config.sfd_type.symbol_length().into();
-            let pac_size: u16 = self.config.pac.as_symbols().into();
+            let max_preamble_length = run_config.rx_preamble_length_max.as_symbols();
+            let sfd_length: u16 = run_config.sfd_type.symbol_length().into();
+            let pac_size: u16 = self.dev_config.pac.as_symbols().into();
             core::cmp::max(max_preamble_length, pac_size) - pac_size + sfd_length + 1
         };
 
         let channel_config = ChannelConfig {
-            channel: self.config.channel,
-            rx_code: config.preamble_code,
-            tx_code: config.preamble_code,
-            sfd_type: config.sfd_type,
+            channel: self.dev_config.channel,
+            rx_code: run_config.preamble_code,
+            tx_code: run_config.preamble_code,
+            sfd_type: run_config.sfd_type,
         };
 
         let base_config = RfConfig {
-            channel: self.config.channel,
-            prf: config.preamble_code.prf(),
-            pac: self.config.pac,
-            rx_ops: self.config.rx_ops,
+            channel: self.dev_config.channel,
+            prf: run_config.preamble_code.prf(),
+            pac: self.dev_config.pac,
+            rx_ops: self.dev_config.rx_ops,
         };
 
         reset_power_up(&mut self.interface).await?;
@@ -932,12 +929,12 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
 
         let mut ral = self.interface.ral();
         ral.sys_cfg().write(|w| {
-            w.set_dis_fcs_tx(!config.correct_tx_fcs);
-            w.set_phr_mode(match config.phr_format {
+            w.set_dis_fcs_tx(!run_config.correct_tx_fcs);
+            w.set_phr_mode(match run_config.phr_format {
                 PhrFormat::Standard => regs::PhrMode::StandardFrame,
                 PhrFormat::Long => regs::PhrMode::LongFrame,
             });
-            w.set_phr_6m8(config.high_phr_bit_rate);
+            w.set_phr_6m8(run_config.high_phr_bit_rate);
             w.set_cia_ipatov(true);
             w.set_cia_sts(false);
             w.set_rxwtoe(true); // Receive Wait Timeout Enable
@@ -946,20 +943,17 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         })?;
 
         self.set_sfd_timeout(sfd_timeout)?;
-        self.set_preamble_timeout(self.config.pac, config.preamble_timeout)?;
+        self.set_preamble_timeout(self.dev_config.pac, run_config.preamble_timeout)?;
         self.configure_ack_response_time()?;
         self.interface.clear_all_events()?;
 
-        self.state = InnerState::Idle(IdleData {
-            phr_format: config.phr_format,
-            correct_tx_fcs: config.correct_tx_fcs,
-        });
+        self.state = InnerState::Running(run_config);
 
         Ok(())
     }
 
     async fn get_timestamp(&mut self) -> Result<Instant, Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Idle(_)) {
+        if !matches!(self.state, InnerState::Running(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
@@ -972,16 +966,16 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         &mut self,
         psdu: &[u8],
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        let InnerState::Idle(idle_data) = &self.state else {
+        let InnerState::Running(run_config) = &self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
         };
 
-        if psdu.len() > usize::from(idle_data.phr_format.max_psdu_length()) {
+        if psdu.len() > usize::from(run_config.phr_format.max_psdu_length()) {
             return Err(Error::Operation(OpError::BufferAccessBeyondPhrFormat(
                 psdu.len(),
-                idle_data.phr_format,
+                run_config.phr_format,
             )));
         }
 
@@ -994,16 +988,16 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         &mut self,
         psdu: &mut [u8],
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        let InnerState::Idle(idle_data) = &self.state else {
+        let InnerState::Running(run_config) = &self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
         };
 
-        if psdu.len() > usize::from(idle_data.phr_format.max_psdu_length()) {
+        if psdu.len() > usize::from(run_config.phr_format.max_psdu_length()) {
             return Err(Error::Operation(OpError::BufferAccessBeyondPhrFormat(
                 psdu.len(),
-                idle_data.phr_format,
+                run_config.phr_format,
             )));
         }
 
@@ -1018,20 +1012,20 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         length: u16,
         start_at: Instant,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        let InnerState::Idle(idle_data) = &self.state else {
+        let InnerState::Running(run_config) = &self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
         };
 
-        if length > idle_data.phr_format.max_psdu_length() {
+        if length > run_config.phr_format.max_psdu_length() {
             return Err(Error::Operation(OpError::TxLengthAbovePhrFormat(
                 length,
-                idle_data.phr_format,
+                run_config.phr_format,
             )));
         }
 
-        if idle_data.correct_tx_fcs && length < FCS_LENGTH {
+        if run_config.correct_tx_fcs && length < FCS_LENGTH {
             return Err(Error::Operation(OpError::TxLengthLessThanFcs(length)));
         }
 
@@ -1067,7 +1061,7 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         rx_start_at: Instant,
         rx_timeout: Duration,
     ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Idle(_)) {
+        if !matches!(self.state, InnerState::Running(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
@@ -1089,10 +1083,10 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         self.interface.set_event_mask(RX_TERMINATION_EVENTS)?;
         self.interface.wait_for_events().await?; // TODO: add deadline
         let events = self.interface.get_events()?;
+        self.interface.clear_all_events()?;
 
         // TODO: Add RX error signalling
         if !events.contains(Events::RXFR | Events::CIADONE) {
-            self.interface.clear_all_events()?;
             return Ok(None);
         }
 

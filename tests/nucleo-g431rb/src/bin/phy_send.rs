@@ -73,7 +73,7 @@ async fn main(_spawner: Spawner) {
     }
 
     info!("Power off UWB module");
-    unwrap!(phy.reset().await);
+    unwrap!(phy.stop().await);
 
     info!("Test is finished");
     loop {

@@ -8,8 +8,8 @@ const RX_DELAY: Duration = Duration::RSTU.mul_u32(1000);
 const RX_TIMEOUT: Duration = Duration::RSTU.mul_u32(1_000_000);
 
 const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
-const PHY_CONFIG: phy::Config = {
-    let mut config = phy::Config::new();
+const RUN_CONFIG: phy::RunConfig = {
+    let mut config = phy::RunConfig::new();
     config.correct_tx_fcs = true;
     config
 };
@@ -24,7 +24,7 @@ where
     info!("Run as initiator");
 
     info!("Configure");
-    phy.start(PHY_CONFIG).await.unwrap();
+    phy.start(RUN_CONFIG).await.unwrap();
 
     let psdu = {
         let mut psdu = Vec::<u8, { MAX_PSDU_SIZE }>::new();
@@ -60,7 +60,7 @@ where
     info!("Run as responder");
 
     info!("Configure");
-    phy.start(PHY_CONFIG).await.unwrap();
+    phy.start(RUN_CONFIG).await.unwrap();
 
     loop {
         let mut psdu = Vec::<u8, { MAX_PSDU_SIZE }>::new();
