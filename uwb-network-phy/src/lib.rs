@@ -1,6 +1,5 @@
 #![cfg_attr(not(test), no_std)]
 
-use bitflags::bitflags;
 use core::num::NonZeroU16;
 
 // This mod MUST go first, so that the others see its macros.
@@ -128,48 +127,6 @@ impl PhrFormat {
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct PanId(u16);
-
-impl PanId {
-    pub const fn new(addr: u16) -> Self {
-        Self(addr)
-    }
-
-    pub const fn as_u16(self) -> u16 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ShortAddress(u16);
-
-impl ShortAddress {
-    pub const fn new(addr: u16) -> Self {
-        Self(addr)
-    }
-
-    pub const fn as_u16(self) -> u16 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ExtendedAddress(u64);
-
-impl ExtendedAddress {
-    pub const fn new(addr: u64) -> Self {
-        Self(addr)
-    }
-
-    pub const fn as_u64(self) -> u64 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum State {
     /// Low power consumption, time is not kept
     Reset,
@@ -178,24 +135,6 @@ pub enum State {
 }
 
 // TODO: add XTAL trim option
-// TODO: add frame format (127 vs 1023 octets)
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AutoAckConfig {
-    pub preamble_length: PreambleLength,
-    // add AIFS duration
-}
-
-impl Default for AutoAckConfig {
-    fn default() -> Self {
-        Self {
-            preamble_length: PreambleLength::Symbols64,
-        }
-    }
-}
-
-// TODO: add XTAL trim option
-// TODO: add frame format (127 vs 1023 octets)
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
@@ -215,8 +154,6 @@ pub struct Config {
     pub preamble_timeout: Option<NonZeroU16>,
     /// Replace last FCS_LENGH octets with calculated FCS
     pub correct_tx_fcs: bool,
-
-    pub auto_ack: Option<AutoAckConfig>,
 }
 
 impl Config {
@@ -230,7 +167,6 @@ impl Config {
             rx_preamble_length_max: PreambleLength::Symbols4096,
             preamble_timeout: None,
             correct_tx_fcs: false,
-            auto_ack: None,
         }
     }
 }
@@ -239,44 +175,6 @@ impl Default for Config {
     fn default() -> Self {
         Self::new()
     }
-}
-
-bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub struct FrameTypeFilter: u8 {
-        const BEACON = 1 << 0;
-        const DATA = 1 << 1;
-        const ACK = 1 << 2;
-        const MAC_COMMAND = 1 << 3;
-        const _RESERVED100 = 1 << 4;
-        const MULTIPURPOSE = 1 << 5;
-        const FRAGMENT = 1 << 6;
-        const EXTENDED = 1 << 7;
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for FrameTypeFilter {
-    fn format(&self, f: defmt::Formatter) {
-        defmt::write!(f, "FrameTypeFilter({=u8})", self.bits());
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct FrameFilter {
-    pub frame_type_filter: FrameTypeFilter,
-    /// Accept some frames with only source address
-    ///
-    /// Conditions:
-    /// * MAC command, data frames: source PAN ID should match own PAN ID
-    /// * Multipurpose frames: destination PAN ID should match own PAN ID
-    pub to_pan_coordinator: bool,
-    /// Allow implicit broadcast
-    ///
-    /// Frame without destination PAN ID and destination address are treated as
-    /// address to the broadcast PAN ID (0xffff) and broadcast address (0xffff)
-    pub implicit_broadcast: bool,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -305,7 +203,6 @@ pub struct RxReport<T> {
     pub bit_rate: BitRate,
     pub fcs_good: bool,
     pub timestamp: T,
-    pub imm_ack: bool,
 }
 
 #[derive(Debug)]
@@ -357,30 +254,6 @@ pub trait Phy {
     async fn reset(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>>;
     async fn start(&mut self, config: Config) -> Result<(), Error<Self::IoError, Self::DevError>>;
 
-    async fn get_extended_address(
-        &mut self,
-    ) -> Result<ExtendedAddress, Error<Self::IoError, Self::DevError>>;
-
-    async fn set_extended_address(
-        &mut self,
-        value: ExtendedAddress,
-    ) -> Result<(), Error<Self::IoError, Self::DevError>>;
-
-    async fn get_pan_address(
-        &mut self,
-    ) -> Result<(PanId, ShortAddress), Error<Self::IoError, Self::DevError>>;
-
-    async fn set_pan_address(
-        &mut self,
-        pan_id: PanId,
-        short_addr: ShortAddress,
-    ) -> Result<(), Error<Self::IoError, Self::DevError>>;
-
-    async fn set_frame_filter(
-        &mut self,
-        value: Option<FrameFilter>,
-    ) -> Result<(), Error<Self::IoError, Self::DevError>>;
-
     async fn get_timestamp(
         &mut self,
     ) -> Result<Self::Instant, Error<Self::IoError, Self::DevError>>;
@@ -402,14 +275,6 @@ pub trait Phy {
         length: u16,
         start_at: Self::Instant,
     ) -> Result<(), Error<Self::IoError, Self::DevError>>;
-
-    async fn transmit_w4r(
-        &mut self,
-        config: TxConfig,
-        length: u16,
-        start_at: Self::Instant,
-        rx_timeout: time::Duration,
-    ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>>;
 
     async fn receive(
         &mut self,

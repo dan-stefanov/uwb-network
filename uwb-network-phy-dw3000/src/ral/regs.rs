@@ -285,7 +285,6 @@ reg_bytes!(0x00, 0x04, 8, Eui, RW, (), "Extended Unique Identifier");
 
 reg_field!(0x00, 0x0c, 4, Panadr, RW, 0xffff_ffff, "PAN Identifier and Short Address");
 reg_field!(0x00, 0x10, 4, SysCfg, RW, 0x0004_1188, "System Configuration");
-reg_field!(0x00, 0x10, 1, SysCfgShort, RW, 0x88, "System Configuration, byte 0");
 reg_field!(0x00, 0x14, 2, FfCfg, RW, 0, "Frame filter configuration");
 reg_bytes!(0x00, 0x1C, 4, SysTime, RO, (), "System Time Counter");
 reg_field!(0x00, 0x24, 6, TxFctrl, RW, 0x0000_0000_1c0c, "Transmit frame control");
@@ -400,15 +399,6 @@ field_bool!(SysCfg, 15, cp_sdc, "Super Deterministic Code (SDC) mode enabled");
 field_enum!(SysCfg, 16, 18, pdoa_mode, u8, PdoaMode, "PDoA mode");
 field_bool!(SysCfg, 18, fast_aat, "Enable fast RX to TX turn around mode");
 // bits 18-31 - reserved
-
-field_bool!(SysCfgShort, 0, ffen, "Frame Filtering Enable");
-field_bool!(SysCfgShort, 1, dis_fcs_tx, "Disable auto-FCS Transmission");
-field_bool!(SysCfgShort, 2, dis_fce, "Disable frame check error handling");
-field_bool!(SysCfgShort, 3, dis_drxb, "Disable Double RX Buffer");
-field_enum!(SysCfgShort, 4, 5, phr_mode, u8, PhrMode, "PHR mode");
-field_bool!(SysCfgShort, 5, phr_6m8, "6.81 Mb/s data for PHR");
-field_bool!(SysCfgShort, 6, spi_crcen, "Enable SPI CRC functionality");
-field_bool!(SysCfgShort, 7, cia_ipatov, "Select CIA processing of the preamble CIR");
 
 field_prim!(FfCfg, 0, 8, frame_type, u8, "Frame type filter bitmap");
 field_bool!(FfCfg, 8, ffbc, "Behave as PAN coordinator");

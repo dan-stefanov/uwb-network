@@ -22,7 +22,6 @@ const IDLE_CONFIG: phy::Config = phy::Config {
     rx_preamble_length_max: PreambleLength::Symbols64,
     preamble_timeout: None,
     correct_tx_fcs: true,
-    auto_ack: None,
 };
 
 const TX_CONFIG: phy::TxConfig = phy::TxConfig {
@@ -52,9 +51,8 @@ where
 
     let mut beacon_psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
     {
-        use crate::phy::{PanId, ShortAddress};
-        use format::Address;
         use format::nested_ie::rd_ie::RmSubPeriodUsage;
+        use format::{Address, PanId, ShortAddress};
 
         let header = format::frame::Header {
             frame_type: format::frame::FrameType::Beacon,

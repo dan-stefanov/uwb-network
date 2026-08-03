@@ -6,8 +6,8 @@ use ral::regs::{DgcCfgLutData, DgcLutData, EventsLow as Events};
 use ral::{RegisterAccess, regs};
 use time::Duration;
 use uwb_network_phy::{
-    BitRate, Config, Error, ExtendedAddress, FCS_LENGTH, FrameFilter, OpError, PanId, PhrFormat,
-    Phy, PreambleCode, PreambleLength, Prf, RxReport, SfdType, ShortAddress, State, TxConfig, time,
+    BitRate, Config, Error, FCS_LENGTH, OpError, PhrFormat, Phy, PreambleCode, PreambleLength, Prf,
+    RxReport, SfdType, State, TxConfig, time,
 };
 
 // This mod MUST go first, so that the others see its macros.
@@ -271,9 +271,6 @@ const RX_TERMINATION_EVENTS: Events = Events::RXPHE
     .union(Events::RXSTO)
     .union(Events::ARFE);
 
-// CIA does not start after SFD detection timeout
-const CIA_TERMINATION_EVENTS: Events = Events::CIADONE.union(Events::CIAERR);
-
 struct InterfaceWrapper<IF>(IF);
 
 impl<IF: Interface> InterfaceWrapper<IF> {
@@ -385,10 +382,8 @@ async fn check_dev_id<IF: Interface>(
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct IdleData {
-    ack_preamble_length: PreambleLength,
     phr_format: PhrFormat,
     correct_tx_fcs: bool,
-    sys_cfg_short: regs::SysCfgShort,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -861,13 +856,13 @@ impl<IF: Interface> Dw3000Phy<IF> {
         )))
     }
 
-    fn get_rx_fine_timestamp(&mut self) -> Result<Instant, Error<IF::Error, DeviceError>> {
+    fn get_fine_rx_timestamp(&mut self) -> Result<Instant, Error<IF::Error, DeviceError>> {
         let mut ral = self.interface.ral();
         let rx_time = ral.rx_time().read_bytes()?;
         Ok(unwrap!(Instant::try_from_ticks(rx_time)))
     }
 
-    fn get_rx_timestamp(&mut self) -> Result<Instant, Error<IF::Error, DeviceError>> {
+    fn get_coarse_rx_timestamp(&mut self) -> Result<Instant, Error<IF::Error, DeviceError>> {
         let mut ral = self.interface.ral();
         let sys_ticks_x2 = ral.rx_rawst().read_bytes()?;
         Ok(unwrap!(Instant::try_from_ticks(
@@ -946,114 +941,20 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
             w.set_cia_ipatov(true);
             w.set_cia_sts(false);
             w.set_rxwtoe(true); // Receive Wait Timeout Enable
-            w.set_auto_ack(config.auto_ack.is_some());
             w.set_cp_spc(regs::StsPocketPosition::NoSts);
-            // Do not wait for CIA to start ACK transmission
-            w.set_fast_aat(true);
+            w.set_fast_aat(false); // RXFR waits for CIADONE or 
         })?;
-
-        let sys_cfg_short = ral.sys_cfg_short().read()?;
 
         self.set_sfd_timeout(sfd_timeout)?;
         self.set_preamble_timeout(self.config.pac, config.preamble_timeout)?;
         self.configure_ack_response_time()?;
         self.interface.clear_all_events()?;
 
-        let ack_preamble_length = if let Some(auto_ack) = config.auto_ack {
-            auto_ack.preamble_length
-        } else {
-            PreambleLength::Symbols64
-        };
-
         self.state = InnerState::Idle(IdleData {
-            ack_preamble_length,
             phr_format: config.phr_format,
             correct_tx_fcs: config.correct_tx_fcs,
-            sys_cfg_short,
         });
 
-        Ok(())
-    }
-
-    async fn get_extended_address(
-        &mut self,
-    ) -> Result<ExtendedAddress, Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Idle(_)) {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
-                self.state.into(),
-            )));
-        }
-
-        let mut ral = self.interface.ral();
-        let value = ral.eui().read_bytes()?;
-        Ok(ExtendedAddress::new(value))
-    }
-
-    async fn set_extended_address(
-        &mut self,
-        value: ExtendedAddress,
-    ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Idle(_)) {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
-                self.state.into(),
-            )));
-        }
-        let mut ral = self.interface.ral();
-        ral.eui().write_bytes(value.as_u64())?;
-        Ok(())
-    }
-
-    async fn get_pan_address(
-        &mut self,
-    ) -> Result<(PanId, ShortAddress), Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Idle(_)) {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
-                self.state.into(),
-            )));
-        }
-        let reg = self.interface.ral().panadr().read()?;
-        Ok((PanId::new(reg.pan_id()), ShortAddress::new(reg.shortaddr())))
-    }
-
-    async fn set_pan_address(
-        &mut self,
-        pan_id: PanId,
-        short_addr: ShortAddress,
-    ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Idle(_)) {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
-                self.state.into(),
-            )));
-        }
-        let mut ral = self.interface.ral();
-        ral.panadr().write(|w| {
-            w.set_pan_id(pan_id.as_u16());
-            w.set_shortaddr(short_addr.as_u16());
-        })?;
-        Ok(())
-    }
-
-    async fn set_frame_filter(
-        &mut self,
-        value: Option<FrameFilter>,
-    ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        let InnerState::Idle(idle_data) = &mut self.state else {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
-                self.state.into(),
-            )));
-        };
-
-        let mut ral = self.interface.ral();
-        if let Some(filter) = value {
-            ral.ff_cfg().write(|w| {
-                w.set_frame_type(filter.frame_type_filter.bits());
-                w.set_ffbc(filter.to_pan_coordinator);
-                w.set_ffib(filter.implicit_broadcast);
-            })?;
-        }
-
-        idle_data.sys_cfg_short.set_ffen(value.is_some());
-        ral.sys_cfg_short().write_value(idle_data.sys_cfg_short)?;
         Ok(())
     }
 
@@ -1161,105 +1062,17 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
         Ok(())
     }
 
-    async fn transmit_w4r(
-        &mut self,
-        config: TxConfig,
-        length: u16,
-        start_at: Instant,
-        rx_timeout: Duration,
-    ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
-        let InnerState::Idle(idle_data) = &self.state else {
-            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
-                self.state.into(),
-            )));
-        };
-
-        if length > idle_data.phr_format.max_psdu_length() {
-            return Err(Error::Operation(OpError::TxLengthAbovePhrFormat(
-                length,
-                idle_data.phr_format,
-            )));
-        }
-
-        if idle_data.correct_tx_fcs && length < FCS_LENGTH {
-            return Err(Error::Operation(OpError::TxLengthLessThanFcs(length)));
-        }
-
-        self.set_tx_config(config, length)?;
-        self.set_dx_time(start_at)?;
-        self.set_rx_frame_timeout(rx_timeout)?;
-
-        self.interface.send_command(FastCommand::DtxW4r)?;
-        let _start_time = self.get_sys_timestamp()?;
-
-        let imm_events = self.interface.get_events()?;
-        if imm_events.contains(Events::HPDWARN) {
-            self.interface.send_command(FastCommand::Txrxoff)?;
-            self.interface.clear_all_events()?;
-            return Err(OpError::StartInstantPassed.into());
-        }
-
-        let bug_state = self.is_tx_missed_deadline_state()?;
-        if bug_state {
-            self.interface.send_command(FastCommand::Txrxoff)?;
-            self.interface.clear_all_events()?;
-            return Err(OpError::StartInstantPassed.into());
-        }
-
-        self.interface.set_event_mask(RX_TERMINATION_EVENTS)?;
-        self.interface.wait_for_events().await?; // TODO: add deadline
-
-        let mut events = self.interface.get_events()?;
-
-        // Due to FAST_ATT flag the RXFR may rise before CIA is complete
-        // RX error flags may rise before CIA is complete
-        if events.intersects(Events::RXSFDD) && !events.intersects(CIA_TERMINATION_EVENTS) {
-            self.interface.set_event_mask(CIA_TERMINATION_EVENTS)?;
-            self.interface.wait_for_events().await?; // TODO: add deadline
-            events = self.interface.get_events()?;
-        }
-
-        // Stop ATT if any
-        self.interface.send_command(FastCommand::Txrxoff)?;
-        self.interface.clear_all_events()?;
-
-        // TODO: Add RX error signalling
-        if !events.contains(Events::RXFR) {
-            return Ok(None);
-        }
-
-        let rx_info = self.get_rx_info()?;
-        let timestamp = self.get_rx_timestamp()?;
-
-        Ok(Some(RxReport {
-            bit_rate: rx_info.bit_rate,
-            ranging_flag: rx_info.phr_ranging_flag,
-            length: rx_info.frame_length,
-            fcs_good: events.contains(Events::RXFCG),
-            timestamp,
-            imm_ack: false,
-        }))
-    }
-
     async fn receive(
         &mut self,
         rx_start_at: Instant,
         rx_timeout: Duration,
     ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
-        let InnerState::Idle(idle_data) = &self.state else {
+        if !matches!(self.state, InnerState::Idle(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
-        };
+        }
 
-        // Configure preamble_length, other fields has no effect on auto ack
-        let tx_config = TxConfig {
-            preamble_length: idle_data.ack_preamble_length,
-            bit_rate: BitRate::Kbs850,
-            phr_ranging_flag: false,
-        };
-
-        self.set_tx_config(tx_config, 0)?;
         self.set_dx_time(rx_start_at)?;
         self.set_rx_frame_timeout(rx_timeout)?;
 
@@ -1275,32 +1088,16 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
 
         self.interface.set_event_mask(RX_TERMINATION_EVENTS)?;
         self.interface.wait_for_events().await?; // TODO: add deadline
-
-        let mut events = self.interface.get_events()?;
-
-        // Due to FAST_ATT flag the RXFR may rise before CIA is complete
-        // RX error flags may rise before CIA is complete
-        if events.intersects(Events::RXSFDD) && !events.intersects(CIA_TERMINATION_EVENTS) {
-            self.interface.set_event_mask(CIA_TERMINATION_EVENTS)?;
-            self.interface.wait_for_events().await?; // TODO: add deadline
-            events = self.interface.get_events()?;
-        }
+        let events = self.interface.get_events()?;
 
         // TODO: Add RX error signalling
-        if !events.contains(Events::RXFR) {
+        if !events.contains(Events::RXFR | Events::CIADONE) {
             self.interface.clear_all_events()?;
             return Ok(None);
         }
 
         let rx_info = self.get_rx_info()?;
-        let timestamp = self.get_rx_timestamp()?;
-
-        // wait for auto-ack transmission
-        if events.contains(Events::ATT) && !events.contains(Events::TXFRS) {
-            self.interface.set_event_mask(Events::TXFRS)?;
-            self.interface.wait_for_events().await?;
-        }
-        self.interface.clear_all_events()?;
+        let timestamp = self.get_fine_rx_timestamp()?;
 
         Ok(Some(RxReport {
             bit_rate: rx_info.bit_rate,
@@ -1308,7 +1105,6 @@ impl<IF: Interface> Phy for Dw3000Phy<IF> {
             length: rx_info.frame_length,
             fcs_good: events.contains(Events::RXFCG),
             timestamp,
-            imm_ack: events.contains(Events::ATT),
         }))
     }
 }

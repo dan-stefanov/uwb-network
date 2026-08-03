@@ -8,7 +8,20 @@ pub mod serializer;
 pub use serializer::{NoSpaceLeft, WriteBuffer};
 
 use crate::mac::format::serializer::{FixDeserializable, FixSerializable, FixSerializationLength};
-use crate::phy::{ExtendedAddress, PanId, ShortAddress};
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct PanId(u16);
+
+impl PanId {
+    pub const fn new(addr: u16) -> Self {
+        Self(addr)
+    }
+
+    pub const fn as_u16(self) -> u16 {
+        self.0
+    }
+}
 
 impl FixSerializationLength for PanId {
     const SER_LEN: usize = 2;
@@ -26,6 +39,20 @@ impl FixDeserializable for PanId {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ShortAddress(u16);
+
+impl ShortAddress {
+    pub const fn new(addr: u16) -> Self {
+        Self(addr)
+    }
+
+    pub const fn as_u16(self) -> u16 {
+        self.0
+    }
+}
+
 impl FixSerializationLength for ShortAddress {
     const SER_LEN: usize = 2;
 }
@@ -39,6 +66,20 @@ impl FixSerializable for ShortAddress {
 impl FixDeserializable for ShortAddress {
     fn deserialize(buf: &[u8]) -> Self {
         Self::new(u16::deserialize(buf))
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ExtendedAddress(u64);
+
+impl ExtendedAddress {
+    pub const fn new(addr: u64) -> Self {
+        Self(addr)
+    }
+
+    pub const fn as_u64(self) -> u64 {
+        self.0
     }
 }
 
