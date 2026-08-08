@@ -49,8 +49,7 @@ pub trait Interface {
     fn set_reset(&mut self) -> Result<(), Self::Error>;
     fn clear_reset(&mut self) -> Result<(), Self::Error>;
     fn is_irq(&mut self) -> Result<bool, Self::Error>;
-    async fn wait_for_irq(&mut self) -> Result<(), Self::Error>;
-    async fn wait_for_irq_with_timeout(&mut self, timeout_us: u32) -> Result<bool, Self::Error>;
+    async fn wait_for_irq(&mut self, timeout_us: u32) -> Result<bool, Self::Error>;
     async fn delay_us(&mut self, delay_us: u32);
 
     fn wake_up(&mut self) -> Result<(), Self::Error>;
@@ -155,15 +154,7 @@ impl<SPI: SpiDevice, RST: OutputPin, IRQ: InputPin + Wait, DELAY: DelayNs> Inter
         self.irq_pin.is_high().map_err(SpiInterfaceError::IrqPin)
     }
 
-    async fn wait_for_irq(&mut self) -> Result<(), Self::Error> {
-        // IRQ is active high by default, driver should not change it
-        self.irq_pin
-            .wait_for_high()
-            .await
-            .map_err(SpiInterfaceError::IrqPin)
-    }
-
-    async fn wait_for_irq_with_timeout(&mut self, timeout_us: u32) -> Result<bool, Self::Error> {
+    async fn wait_for_irq(&mut self, timeout_us: u32) -> Result<bool, Self::Error> {
         match select(
             self.irq_pin.wait_for_high(),
             self.delay.delay_us(timeout_us),

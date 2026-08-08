@@ -28,6 +28,8 @@ impl Duration {
     /// Defined at IEEE 802.15.4z section 6.9.1.5
     pub const RSTU: Duration = Self::CHIP.mul_u32(416);
 
+    pub const SECOND: Duration = Self::CHIP.mul_u32(499_200_000);
+
     pub const fn from_ticks(ticks: u64) -> Self {
         Self(ticks)
     }
@@ -65,6 +67,15 @@ impl Duration {
         match self.0.checked_div(rhs.0) {
             Some(value) => Some(value),
             None => None,
+        }
+    }
+
+    /// Divides one Duration by another, rounding up and returning a factor or None if the later is zero.
+    pub const fn checked_div_ceil(self, rhs: Duration) -> Option<u64> {
+        if rhs.0 == 0 {
+            None
+        } else {
+            Some(self.0.div_ceil(rhs.0))
         }
     }
 
@@ -111,6 +122,14 @@ impl Duration {
     /// Divides one Duration by another
     pub const fn div(self, rhs: Duration) -> u64 {
         match self.checked_div(rhs) {
+            Some(duration) => duration,
+            None => core::panic!("divide by zero error when dividing duration by another"),
+        }
+    }
+
+    /// Divides one Duration by another, rounding up
+    pub const fn div_ceil(self, rhs: Duration) -> u64 {
+        match self.checked_div_ceil(rhs) {
             Some(duration) => duration,
             None => core::panic!("divide by zero error when dividing duration by another"),
         }

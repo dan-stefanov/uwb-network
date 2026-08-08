@@ -209,7 +209,8 @@ pub struct RxReport<T> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OpError {
     ProhibitedInCurrentState(State),
-    StartInstantPassed, // TODO: add timestamp data
+    ExcesiveRxTimeout(time::Duration),
+    StartInstantPassed(time::Duration),
     BufferAccessBeyondPhrFormat(usize, PhrFormat),
     TxLengthAbovePhrFormat(u16, PhrFormat),
     TxLengthLessThanFcs(u16),

@@ -4,7 +4,7 @@ use core::num::NonZeroU16;
 use interface::Interface;
 use ral::regs::{DgcCfgLutData, DgcLutData, EventsLow as Events};
 use ral::{RegisterAccess, regs};
-use uwb_network_phy::{self as phy, Error, OpError, time::Duration};
+use uwb_network_phy::{self as phy, Error, OpError, time::CyclicTimestamp, time::Duration};
 
 // This mod MUST go first, so that the others see its macros.
 pub(crate) mod fmt;
@@ -33,6 +33,14 @@ const RX_CALIBRATION_POLL_PERIOD_US: u32 = 20_000;
 
 const RX_FRAME_TIMEOUT_UNIT: Duration = Duration::CHIP.mul_u32(512);
 const MAX_RX_FRAME_TIMEOUT: Duration = RX_FRAME_TIMEOUT_UNIT.mul_u32((1u32 << 20) - 1);
+
+// minimum microsecond duration in host system relative to DW3000 clock
+const HOST_MICROSECOND_MIN: Duration = {
+    const CLOCK_TOL: f32 = 0.05; // STM32 HSI16 are typically below 2%
+    let ticks = (Duration::SECOND.as_ticks() as f32 / 1.0e6 / (1.0 + CLOCK_TOL)) as u64;
+    core::assert!(ticks > 0);
+    Duration::from_ticks(ticks)
+};
 
 /// QORVO Register Identification Tag
 const DEV_RIDTAG: u16 = 0xdeca;
@@ -130,6 +138,8 @@ pub enum DeviceError {
     PllLockTimeout,
     RxCalibrationTimeout,
     RxCalibrationFailure,
+    TxStateTimeout { timeout_us: u32 },
+    RxStateTimeout { timeout_us: u32 },
 }
 
 /// Subset of IEEE 802.15.4 HRP UWB channels supported by the DW3000.
@@ -299,10 +309,6 @@ impl<IF: Interface> InterfaceWrapper<IF> {
         self.0.is_irq().map_err(Error::Interface)
     }
 
-    async fn wait_for_events(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
-        self.0.wait_for_irq().await.map_err(Error::Interface)
-    }
-
     async fn delay_us(&mut self, delay_us: u32) {
         self.0.delay_us(delay_us).await;
     }
@@ -330,16 +336,14 @@ impl<IF: Interface> InterfaceWrapper<IF> {
         Ok(())
     }
 
-    async fn wait_for_events_with_timeout(
+    async fn wait_for_events(
         &mut self,
         timeout_us: u32,
-        timeout_error: DeviceError,
-    ) -> Result<(), Error<IF::Error, DeviceError>> {
-        match self.0.wait_for_irq_with_timeout(timeout_us).await {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(Error::Device(timeout_error)),
-            Err(error) => Err(Error::Interface(error)),
-        }
+    ) -> Result<bool, Error<IF::Error, DeviceError>> {
+        self.0
+            .wait_for_irq(timeout_us)
+            .await
+            .map_err(Error::Interface)
     }
 }
 
@@ -351,9 +355,9 @@ async fn reset_power_up<IF: Interface>(
     interface.clear_reset()?;
 
     // SPIRDY event is enabled by default
-    interface
-        .wait_for_events_with_timeout(XTAL_WAKE_UP_TIMEOUT_US, DeviceError::ResetTimeout)
-        .await?;
+    if !interface.wait_for_events(XTAL_WAKE_UP_TIMEOUT_US).await? {
+        return Err(Error::Device(DeviceError::ResetTimeout));
+    }
 
     let events = interface.get_events()?;
     if !events.contains(Events::SPIRDY) {
@@ -555,9 +559,10 @@ impl<IF: Interface> Dw3000Phy<IF> {
         ral.seq_ctrl().modify(|w| w.set_ainit2idle(true))?;
 
         self.interface.set_event_mask(Events::CPLOCK)?;
-        self.interface
-            .wait_for_events_with_timeout(PLL_LOCK_TIMEOUT_US, DeviceError::PllLockTimeout)
-            .await
+        if !self.interface.wait_for_events(PLL_LOCK_TIMEOUT_US).await? {
+            return Err(Error::Device(DeviceError::PllLockTimeout));
+        }
+        Ok(())
     }
 
     fn configure_rf(&mut self, config: RfConfig) -> Result<(), Error<IF::Error, DeviceError>> {
@@ -1006,11 +1011,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
     async fn transmit(
         &mut self,
-        config: phy::TxConfig,
+        tx_config: phy::TxConfig,
         length: u16,
         start_at: Instant,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        let InnerState::Running(run_config) = &self.state else {
+        let InnerState::Running(run_config) = self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
@@ -1027,28 +1032,61 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(Error::Operation(OpError::TxLengthLessThanFcs(length)));
         }
 
-        self.set_tx_config(config, length)?;
+        self.set_tx_config(tx_config, length)?;
         self.set_dx_time(start_at)?;
 
         self.interface.send_command(FastCommand::Dtx)?;
-        let _start_time = self.get_sys_timestamp()?;
+        let start_instant = self.get_sys_timestamp()?;
+        let overtime = start_instant - start_at;
 
         let imm_events = self.interface.get_events()?;
         if imm_events.contains(Events::HPDWARN) {
             self.interface.send_command(FastCommand::Txrxoff)?;
             self.interface.clear_all_events()?;
-            return Err(OpError::StartInstantPassed.into());
+            return Err(OpError::StartInstantPassed(overtime).into());
         }
 
         let bug_state = self.is_tx_missed_deadline_state()?;
         if bug_state {
             self.interface.send_command(FastCommand::Txrxoff)?;
             self.interface.clear_all_events()?;
-            return Err(OpError::StartInstantPassed.into());
+            return Err(OpError::StartInstantPassed(overtime).into());
         }
 
+        let phr_bit_rate = if run_config.high_phr_bit_rate {
+            tx_config.bit_rate
+        } else {
+            phy::BitRate::Kbs850
+        };
+
+        const _START_DELAY_MAX: Duration = Instant::PERIOD;
+        let start_delay = start_at - start_instant;
+
+        const _FRAME_DURATION_MAX: Duration = Instant::PERIOD; // significant exaggeration
+        let frame_duration = phy::shr_duration(
+            run_config.preamble_code.prf(),
+            run_config.sfd_type,
+            tx_config.preamble_length,
+        ) + phy::phr_duration(phr_bit_rate)
+            + phy::psdu_duration(tx_config.bit_rate, length);
+
+        const _EVENT_TIMEOUT_US_MAX: u64 = _START_DELAY_MAX
+            .add(_FRAME_DURATION_MAX)
+            .div_ceil(HOST_MICROSECOND_MIN);
+        let event_timetout_us = (start_delay + frame_duration).div_ceil(HOST_MICROSECOND_MIN);
+
+        const _ASSERT: u64 = u32::MAX as u64 - _EVENT_TIMEOUT_US_MAX;
+        let event_timetout_us = unwrap!(u32::try_from(event_timetout_us));
+
         self.interface.set_event_mask(Events::TXFRS)?;
-        self.interface.wait_for_events().await?; // TODO: add timeout
+        if !self.interface.wait_for_events(event_timetout_us).await? {
+            self.interface.send_command(FastCommand::Txrxoff)?;
+            self.interface.clear_all_events()?;
+            return Err(Error::Device(DeviceError::TxStateTimeout {
+                timeout_us: event_timetout_us,
+            }));
+        }
+
         self.interface.clear_all_events()?;
 
         Ok(())
@@ -1056,7 +1094,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
     async fn receive(
         &mut self,
-        rx_start_at: Instant,
+        start_at: Instant,
         rx_timeout: Duration,
     ) -> Result<Option<phy::RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
         if !matches!(self.state, InnerState::Running(_)) {
@@ -1065,21 +1103,44 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             )));
         }
 
-        self.set_dx_time(rx_start_at)?;
+        if rx_timeout > MAX_RX_FRAME_TIMEOUT {
+            return Err(Error::Operation(OpError::ExcesiveRxTimeout(rx_timeout)));
+        }
+
+        self.set_dx_time(start_at)?;
         self.set_rx_frame_timeout(rx_timeout)?;
 
         self.interface.send_command(FastCommand::Drx)?;
-        let _start_time = self.get_sys_timestamp()?;
+        let start_instant = self.get_sys_timestamp()?;
+        let overtime = start_instant - start_at;
 
         let imm_events = self.interface.get_events()?;
         if imm_events.contains(Events::HPDWARN) {
             self.interface.send_command(FastCommand::Txrxoff)?;
             self.interface.clear_all_events()?;
-            return Err(OpError::StartInstantPassed.into());
+            return Err(OpError::StartInstantPassed(overtime).into());
         }
 
         self.interface.set_event_mask(RX_TERMINATION_EVENTS)?;
-        self.interface.wait_for_events().await?; // TODO: add deadline
+
+        const _START_DELAY_MAX: Duration = Instant::PERIOD;
+        let start_delay = start_at - start_instant;
+
+        const _EVENT_TIMEOUT_US_MAX: u64 = _START_DELAY_MAX
+            .add(MAX_RX_FRAME_TIMEOUT)
+            .div_ceil(HOST_MICROSECOND_MIN);
+        let event_timeout_us = (start_delay + rx_timeout).div_ceil(HOST_MICROSECOND_MIN);
+
+        const _ASSERT: u64 = u32::MAX as u64 - _EVENT_TIMEOUT_US_MAX;
+        let event_timeout_us = unwrap!(u32::try_from(event_timeout_us));
+
+        if !self.interface.wait_for_events(event_timeout_us).await? {
+            self.interface.send_command(FastCommand::Txrxoff)?;
+            self.interface.clear_all_events()?;
+            return Err(Error::Device(DeviceError::RxStateTimeout {
+                timeout_us: event_timeout_us,
+            }));
+        }
         let events = self.interface.get_events()?;
         self.interface.clear_all_events()?;
 
