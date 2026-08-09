@@ -598,7 +598,6 @@ impl<IF: Interface> Dw3000Phy<IF> {
             w.set_thr_64(0x32);
         })?;
 
-        // TODO: check if pac actually affect anything here
         ral.dtune0().write(|w| {
             w.set_pac(match config.pac {
                 PreambleAcquisitionChunk::Symbols4 => regs::Pac::Symbols4,
@@ -628,24 +627,6 @@ impl<IF: Interface> Dw3000Phy<IF> {
             w.set_sts_pwr(self.dev_config.tx_power.sts.0);
         })?;
 
-        Ok(())
-    }
-
-    fn configure_ack_response_time(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
-        let mut ral = self.interface.ral();
-        ral.ack_resp_t().write(|w| {
-            // IEEE802154-2020, 6.7.4.3: AIFS for UWB is equal to SIFS
-            // IEEE802154-2020, 10.1.4: minimum macSifsPeriod is 12 preamble symbols
-            w.set_ack_tim(12);
-            // IEEE802154-2020, table 15-5: preamble symbol duration is:
-            //   Prf::Mhz16 => 496 chips, i.e. 124 sys ticks
-            //   Prf::Mhz64 => 508 chips, i.e. 127 sys ticks
-            // DW3000 UM, 8.2.2.20: recommends starting RX 2 (BitRate::Kbs850) or
-            // 3 (BitRate::Kbs6810) symbols before ACK transmission.
-            // Maximum delay is
-            //   (12 - max{2, 3}) * min{124, 127} // 128 = 8
-            w.set_w4r_tim(8);
-        })?;
         Ok(())
     }
 
@@ -898,10 +879,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         run_config: phy::RunConfig,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         // TODO: Check for updates at https://gist.github.com/egnor/455d510e11c22deafdec14b09da5bf54
-        // TODO: check double buffer in SYS_CFG.DIS_DRXB
-        // TODO: check PHR data rate in SYS_CFG.PHR_6M8
-        // TODO: configure rx timeout in SYS_CFG.RXWTOE
-        // TODO: check RX frame processing according to SYS_CFG.FAST_AAT
 
         let channel_config = ChannelConfig {
             channel: self.dev_config.channel,
@@ -945,7 +922,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             w.set_fast_aat(false); // RXFR waits for CIADONE or 
         })?;
 
-        self.configure_ack_response_time()?;
         self.interface.clear_all_events()?;
 
         self.state = InnerState::Running(run_config);
