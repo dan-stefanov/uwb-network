@@ -19,9 +19,12 @@ const RUN_CONFIG: phy::RunConfig = phy::RunConfig {
     sfd_type: SfdType::Sfd0,
     phr_format: PhrFormat::Standard,
     high_phr_bit_rate: false,
-    rx_preamble_length_max: PreambleLength::Symbols64,
-    preamble_timeout: None,
     correct_tx_fcs: true,
+};
+
+const RX_CONFIG: phy::RxConfig = phy::RxConfig {
+    max_preamble_length: PreambleLength::Symbols64,
+    max_preamble_hunt: None,
 };
 
 const TX_CONFIG: phy::TxConfig = phy::TxConfig {
@@ -151,7 +154,11 @@ where
         let now = phy.get_timestamp().await.unwrap();
 
         let status = phy
-            .receive(now + TURNAROUND_DURATION, PHY::MAX_RX_FRAME_TIMEOUT)
+            .receive(
+                RX_CONFIG,
+                now + TURNAROUND_DURATION,
+                PHY::MAX_RX_FRAME_TIMEOUT,
+            )
             .await
             .unwrap();
 
@@ -169,6 +176,7 @@ where
             for i in 1..SLOT_COUNT {
                 let status = phy
                     .receive(
+                        RX_CONFIG,
                         super_frame_start + (i as u32) * SLOT_DURATION,
                         SLOT_DURATION - TURNAROUND_DURATION,
                     )

@@ -145,13 +145,6 @@ pub struct RunConfig {
     ///
     /// When cleared, use BitRate::Kbs6810 for any PSDU bit rate
     pub high_phr_bit_rate: bool,
-    pub rx_preamble_length_max: PreambleLength,
-    /// Preamble hunting duration in symbols
-    ///
-    /// Implementation should hunt for preamble at least for this duration.
-    /// Once timeout has expired, implementation may stop reception to
-    /// save power.
-    pub preamble_timeout: Option<NonZeroU16>,
     /// Replace last FCS_LENGTH octets with calculated FCS
     pub correct_tx_fcs: bool,
 }
@@ -164,8 +157,6 @@ impl RunConfig {
             sfd_type: SfdType::Sfd0,
             phr_format: PhrFormat::Standard,
             high_phr_bit_rate: false,
-            rx_preamble_length_max: PreambleLength::Symbols4096,
-            preamble_timeout: None,
             correct_tx_fcs: false,
         }
     }
@@ -191,6 +182,32 @@ impl Default for TxConfig {
             preamble_length: PreambleLength::Symbols64,
             bit_rate: BitRate::Kbs850,
             phr_ranging_flag: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct RxConfig {
+    /// Preamble hunting duration in symbols
+    ///
+    /// Implementation should hunt for preamble at least for this duration.
+    /// Once timeout has expired, implementation may stop reception to
+    /// save power.
+    pub max_preamble_hunt: Option<NonZeroU16>,
+    /// Maximum length of rx frame preamble in symbols
+    ///
+    /// Implementation should be able to receive frames of this duration.
+    /// Implementation may restart the preamble hunt, if SFD did not happened
+    /// after this amount of preamble symbols.
+    pub max_preamble_length: PreambleLength,
+}
+
+impl Default for RxConfig {
+    fn default() -> Self {
+        Self {
+            max_preamble_hunt: None,
+            max_preamble_length: PreambleLength::Symbols4096,
         }
     }
 }
@@ -282,8 +299,9 @@ pub trait Phy {
 
     async fn receive(
         &mut self,
+        config: RxConfig,
         start_at: Self::Instant,
-        rx_timeout: time::Duration,
+        timeout: time::Duration,
     ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>>;
 }
 

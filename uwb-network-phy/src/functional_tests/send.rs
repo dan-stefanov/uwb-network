@@ -69,7 +69,9 @@ where
 
         let timestamp = phy.get_timestamp().await.unwrap();
 
-        let status = phy.receive(timestamp + RX_DELAY, RX_TIMEOUT).await;
+        let status = phy
+            .receive(phy::RxConfig::default(), timestamp + RX_DELAY, RX_TIMEOUT)
+            .await;
 
         match status {
             Ok(Some(report)) => {

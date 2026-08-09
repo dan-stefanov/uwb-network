@@ -795,9 +795,17 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(())
     }
 
-    // TODO: Derive from preamble length
-    fn set_sfd_timeout(&mut self, symbols: u16) -> Result<(), Error<IF::Error, DeviceError>> {
+    fn set_sfd_timeout(
+        &mut self,
+        max_preamble_length: phy::PreambleLength,
+        sfd_type: phy::SfdType,
+    ) -> Result<(), Error<IF::Error, DeviceError>> {
         // UserManual discourage disabling timeout
+        // DW3000 UM, 8.2.7.2
+        let max_preamble_length = max_preamble_length.as_symbols();
+        let sfd_length: u16 = sfd_type.symbol_length().into();
+        let pac_size: u16 = self.dev_config.pac.as_symbols().into();
+        let symbols = max_preamble_length.max(pac_size) - pac_size + sfd_length + 1;
 
         let mut ral = self.interface.ral();
         assert_ne!(symbols, 0);
@@ -895,14 +903,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         // TODO: configure rx timeout in SYS_CFG.RXWTOE
         // TODO: check RX frame processing according to SYS_CFG.FAST_AAT
 
-        // DW3000 UM, 8.2.7.2
-        let sfd_timeout = {
-            let max_preamble_length = run_config.rx_preamble_length_max.as_symbols();
-            let sfd_length: u16 = run_config.sfd_type.symbol_length().into();
-            let pac_size: u16 = self.dev_config.pac.as_symbols().into();
-            core::cmp::max(max_preamble_length, pac_size) - pac_size + sfd_length + 1
-        };
-
         let channel_config = ChannelConfig {
             channel: self.dev_config.channel,
             rx_code: run_config.preamble_code,
@@ -945,8 +945,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             w.set_fast_aat(false); // RXFR waits for CIADONE or 
         })?;
 
-        self.set_sfd_timeout(sfd_timeout)?;
-        self.set_preamble_timeout(self.dev_config.pac, run_config.preamble_timeout)?;
         self.configure_ack_response_time()?;
         self.interface.clear_all_events()?;
 
@@ -1094,19 +1092,22 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
     async fn receive(
         &mut self,
+        rx_config: phy::RxConfig,
         start_at: Instant,
         rx_timeout: Duration,
     ) -> Result<Option<phy::RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Running(_)) {
+        let InnerState::Running(run_config) = self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
-        }
+        };
 
         if rx_timeout > MAX_RX_FRAME_TIMEOUT {
             return Err(Error::Operation(OpError::ExcessiveRxTimeout(rx_timeout)));
         }
 
+        self.set_sfd_timeout(rx_config.max_preamble_length, run_config.sfd_type)?;
+        self.set_preamble_timeout(self.dev_config.pac, rx_config.max_preamble_hunt)?;
         self.set_dx_time(start_at)?;
         self.set_rx_frame_timeout(rx_timeout)?;
 
