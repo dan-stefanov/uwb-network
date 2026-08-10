@@ -1006,8 +1006,15 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(Error::Operation(OpError::TxLengthLessThanFcs(length)));
         }
 
+        let shr_duration = phy::shr_duration(
+            run_config.preamble_code.prf(),
+            run_config.sfd_type,
+            tx_config.preamble_length,
+        );
+        let rmarker_at = start_at + shr_duration;
+
         self.set_tx_config(tx_config, length)?;
-        self.set_dx_time(start_at)?;
+        self.set_dx_time(rmarker_at)?;
 
         self.interface.send_command(FastCommand::Dtx)?;
         let start_instant = self.get_sys_timestamp()?;
@@ -1037,11 +1044,8 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         let start_delay = start_at - start_instant;
 
         const _FRAME_DURATION_MAX: Duration = Instant::PERIOD; // significant exaggeration
-        let frame_duration = phy::shr_duration(
-            run_config.preamble_code.prf(),
-            run_config.sfd_type,
-            tx_config.preamble_length,
-        ) + phy::phr_duration(phr_bit_rate)
+        let frame_duration = shr_duration
+            + phy::phr_duration(phr_bit_rate)
             + phy::psdu_duration(tx_config.bit_rate, length);
 
         const _EVENT_TIMEOUT_US_MAX: u64 = _START_DELAY_MAX
