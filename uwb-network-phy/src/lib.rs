@@ -152,7 +152,7 @@ pub struct RunConfig {
     /// Once timeout has expired, implementation may stop reception to
     /// save power.
     pub preamble_timeout: Option<NonZeroU16>,
-    /// Replace last FCS_LENGH octets with calculated FCS
+    /// Replace last FCS_LENGTH octets with calculated FCS
     pub correct_tx_fcs: bool,
 }
 
@@ -209,7 +209,7 @@ pub struct RxReport<T> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OpError {
     ProhibitedInCurrentState(State),
-    ExcesiveRxTimeout(time::Duration),
+    ExcessiveRxTimeout(time::Duration),
     StartInstantPassed(time::Duration),
     BufferAccessBeyondPhrFormat(usize, PhrFormat),
     TxLengthAbovePhrFormat(u16, PhrFormat),
@@ -227,7 +227,7 @@ pub enum Error<IF, DEV> {
 impl<IF: defmt::Format, DEV: defmt::Format> defmt::Format for Error<IF, DEV> {
     fn format(&self, f: defmt::Formatter) {
         match self {
-            Error::Interface(iface) => defmt::write!(f, "Error::Interface({:?})", iface),
+            Error::Interface(interface) => defmt::write!(f, "Error::Interface({:?})", interface),
             Error::Device(dev) => defmt::write!(f, "Error::Device({:?})", dev),
             Error::Operation(op) => defmt::write!(f, "Error::Operation({:?})", op),
         }

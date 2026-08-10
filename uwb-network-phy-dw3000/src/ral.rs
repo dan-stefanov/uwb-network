@@ -16,7 +16,7 @@ pub enum Error<IF: Interface> {
 impl<IF: Interface> fmt::Debug for Error<IF> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Interface(iface) => write!(f, "Error::Interface({:?})", iface),
+            Error::Interface(interface) => write!(f, "Error::Interface({:?})", interface),
         }
     }
 }
@@ -29,7 +29,7 @@ where
 {
     fn format(&self, f: defmt::Formatter) {
         match self {
-            Error::Interface(iface) => defmt::write!(f, "Error::Interface({:?})", iface),
+            Error::Interface(interface) => defmt::write!(f, "Error::Interface({:?})", interface),
         }
     }
 }

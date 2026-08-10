@@ -1073,17 +1073,17 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         const _EVENT_TIMEOUT_US_MAX: u64 = _START_DELAY_MAX
             .add(_FRAME_DURATION_MAX)
             .div_ceil(HOST_MICROSECOND_MIN);
-        let event_timetout_us = (start_delay + frame_duration).div_ceil(HOST_MICROSECOND_MIN);
+        let event_timeout_us = (start_delay + frame_duration).div_ceil(HOST_MICROSECOND_MIN);
 
         const _ASSERT: u64 = u32::MAX as u64 - _EVENT_TIMEOUT_US_MAX;
-        let event_timetout_us = unwrap!(u32::try_from(event_timetout_us));
+        let event_timeout_us = unwrap!(u32::try_from(event_timeout_us));
 
         self.interface.set_event_mask(Events::TXFRS)?;
-        if !self.interface.wait_for_events(event_timetout_us).await? {
+        if !self.interface.wait_for_events(event_timeout_us).await? {
             self.interface.send_command(FastCommand::Txrxoff)?;
             self.interface.clear_all_events()?;
             return Err(Error::Device(DeviceError::TxStateTimeout {
-                timeout_us: event_timetout_us,
+                timeout_us: event_timeout_us,
             }));
         }
 
@@ -1104,7 +1104,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         }
 
         if rx_timeout > MAX_RX_FRAME_TIMEOUT {
-            return Err(Error::Operation(OpError::ExcesiveRxTimeout(rx_timeout)));
+            return Err(Error::Operation(OpError::ExcessiveRxTimeout(rx_timeout)));
         }
 
         self.set_dx_time(start_at)?;
