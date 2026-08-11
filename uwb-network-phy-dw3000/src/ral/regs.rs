@@ -85,8 +85,7 @@ pub enum BitRate {
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum TxPreambleLength {
-    /// Not recommended
-    Symbols16 = 0b0000,
+    Symbols16 = 0b0000, // undocumented
     Symbols64 = 0b0001,
     Symbols1024 = 0b0010,
     Symbols4096 = 0b0011,
@@ -293,7 +292,6 @@ reg_bytes!(0x00, 0x2c, 4, DxTime, RW, (), "Delayed send or receive time");
 reg_bytes!(0x00, 0x30, 4, DrefTime, RW, (), "Delayed send or receive reference time");
 reg_field!(0x00, 0x34, 3, RxFwto, RW, 0, "Receive frame wait timeout");
 reg_field!(0x00, 0x4c, 4, RxFinfo, RO, (), "RX frame information");
-reg_field!(0x00, 0x4c, 4, RxFinfoShort, RO, (), "RX frame information, bytes 0..=1");
 // Chip does not support 16 byte access for RX_TIME register
 reg_bytes!(0x00, 0x64, 5, RxTime, RO, (), "Receive accurate time stamp"); 
 reg_bytes!(0x00, 0x70, 4, RxRawst, RO, (), "Receive raw time stamp");
@@ -436,13 +434,6 @@ field_bool!(RxFinfo, 15, rng, "Ranging flag in PHR");
 field_enum!(RxFinfo, 16, 18, rxpfr, u8, RxPfr, "Receive PFR");
 field_enum!(RxFinfo, 18, 20, rxpsr, u8, RxPreambleLength, "Receive preamble length from PHR");
 field_prim!(RxFinfo, 20, 32, rxpacc, u16, "Preamble accumulation count");
-
-field_prim!(RxFinfoShort, 0, 10, rxflen, u16, "Receive frame length");
-// bit 10 - reserved
-field_prim!(RxFinfoShort, 11, 13, rxnspl, u8, "Receive non-standard preamble length, estimated");
-field_enum!(RxFinfoShort, 13, 14, rxbr, u8, BitRate, "Receive bit rate");
-// bit 14 - reserved
-field_bool!(RxFinfoShort, 15, rng, "Ranging flag in PHR");
 
 field_prim!(AckRespT, 0, 20, w4r_tim, u8, "Wait-for-response turn-around time, 128 System ticks");
 // bits 20-23 - reserved

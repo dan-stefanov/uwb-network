@@ -61,11 +61,23 @@ impl PreambleCode {
 pub enum PreambleLength {
     /// IEEE 802.15.4 standard length
     Symbols16,
-    /// IEEE 802.15.4 standard length
+    /// Non-standard length
+    Symbols32,
+    /// IEEE 802.15.4, IEEE 802.15.8 standard length
     Symbols64,
-    /// IEEE 802.15.4 standard length
+    /// IEEE 802.15.8 standard length
+    Symbols128,
+    /// IEEE 802.15.8 standard length
+    Symbols256,
+    /// IEEE 802.15.8 standard length
+    Symbols512,
+    /// IEEE 802.15.4, IEEE 802.15.8 standard length
     Symbols1024,
-    /// IEEE 802.15.4 standard length
+    /// IEEE 802.15.8 standard length
+    Symbols1536,
+    /// IEEE 802.15.8 standard length
+    Symbols2048,
+    /// IEEE 802.15.4, IEEE 802.15.8 standard length
     Symbols4096,
 }
 
@@ -73,8 +85,14 @@ impl PreambleLength {
     pub const fn as_symbols(self) -> u16 {
         match self {
             PreambleLength::Symbols16 => 16,
+            PreambleLength::Symbols32 => 32,
             PreambleLength::Symbols64 => 64,
+            PreambleLength::Symbols128 => 128,
+            PreambleLength::Symbols256 => 256,
+            PreambleLength::Symbols512 => 512,
             PreambleLength::Symbols1024 => 1024,
+            PreambleLength::Symbols1536 => 1536,
+            PreambleLength::Symbols2048 => 2048,
             PreambleLength::Symbols4096 => 4096,
         }
     }
@@ -173,7 +191,7 @@ impl Default for RunConfig {
 pub struct TxConfig {
     pub preamble_length: PreambleLength,
     pub bit_rate: BitRate,
-    pub phr_ranging_flag: bool,
+    pub ranging_flag: bool,
 }
 
 impl Default for TxConfig {
@@ -181,7 +199,7 @@ impl Default for TxConfig {
         Self {
             preamble_length: PreambleLength::Symbols64,
             bit_rate: BitRate::Kbs850,
-            phr_ranging_flag: false,
+            ranging_flag: false,
         }
     }
 }
@@ -215,6 +233,10 @@ impl Default for RxConfig {
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RxReport<T> {
+    /// Preamble length from PHR, only for 127-octet format
+    pub preamble_length_phr: Option<PreambleLength>,
+    /// Preamble length estimation based on accumulated preamble count
+    pub preamble_length_acc: PreambleLength,
     pub ranging_flag: bool,
     pub length: u16,
     pub bit_rate: BitRate,

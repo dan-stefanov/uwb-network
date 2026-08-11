@@ -30,7 +30,7 @@ const RX_CONFIG: phy::RxConfig = phy::RxConfig {
 const TX_CONFIG: phy::TxConfig = phy::TxConfig {
     preamble_length: PreambleLength::Symbols64,
     bit_rate: BitRate::Kbs850,
-    phr_ranging_flag: false,
+    ranging_flag: false,
 };
 
 const SHR_DURATION: Duration = phy::shr_duration(

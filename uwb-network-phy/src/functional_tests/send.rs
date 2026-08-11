@@ -78,11 +78,7 @@ where
                 psdu.resize(report.length.into(), 0).unwrap();
                 phy.read_rx_buffer(psdu.as_mut_slice()).await.unwrap();
 
-                info!(
-                    "RX frame FCS: {}, data: {=[u8]:02x}",
-                    report.fcs_good,
-                    psdu.as_slice()
-                );
+                info!("RX frame: {}, data: {=[u8]:02x}", report, psdu.as_slice());
             }
             Ok(None) => {
                 info!("RX frame timeout, try again");

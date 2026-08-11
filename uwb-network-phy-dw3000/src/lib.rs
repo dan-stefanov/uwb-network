@@ -243,10 +243,16 @@ struct ChannelConfig {
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Eq, PartialEq)]
-struct RxInfo {
+struct RxFrameInfo {
     pub frame_length: u16,
     pub bit_rate: phy::BitRate,
-    pub phr_ranging_flag: bool,
+    pub ranging_flag: bool,
+    /// Preamble length according to PHR, 127 octet frame only
+    ///
+    /// Valid values: 16, 64, 1024, 4096
+    pub preamble_length_phr: Option<phy::PreambleLength>,
+    /// Preamble length by accumulated symbols
+    pub preamble_length_acc: phy::PreambleLength,
 }
 
 struct OtpData {
@@ -726,11 +732,17 @@ impl<IF: Interface> Dw3000Phy<IF> {
                 phy::BitRate::Kbs850 => regs::BitRate::Kbs850,
                 phy::BitRate::Kbs6810 => regs::BitRate::Kbs6810,
             });
-            w.set_tr(config.phr_ranging_flag);
+            w.set_tr(config.ranging_flag);
             w.set_txpsr(match config.preamble_length {
                 phy::PreambleLength::Symbols16 => regs::TxPreambleLength::Symbols16,
+                phy::PreambleLength::Symbols32 => regs::TxPreambleLength::Symbols32,
                 phy::PreambleLength::Symbols64 => regs::TxPreambleLength::Symbols64,
+                phy::PreambleLength::Symbols128 => regs::TxPreambleLength::Symbols128,
+                phy::PreambleLength::Symbols256 => regs::TxPreambleLength::Symbols256,
+                phy::PreambleLength::Symbols512 => regs::TxPreambleLength::Symbols512,
                 phy::PreambleLength::Symbols1024 => regs::TxPreambleLength::Symbols1024,
+                phy::PreambleLength::Symbols1536 => regs::TxPreambleLength::Symbols1536,
+                phy::PreambleLength::Symbols2048 => regs::TxPreambleLength::Symbols2048,
                 phy::PreambleLength::Symbols4096 => regs::TxPreambleLength::Symbols4096,
             });
         })?;
@@ -813,17 +825,48 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(())
     }
 
-    fn get_rx_info(&mut self) -> Result<RxInfo, Error<IF::Error, DeviceError>> {
+    fn get_rx_frame_info(
+        &mut self,
+        sfd_type: phy::SfdType,
+        phr_format: phy::PhrFormat,
+    ) -> Result<RxFrameInfo, Error<IF::Error, DeviceError>> {
         let mut ral = self.interface.ral();
-        let rx_info = ral.rx_finfo_short().read()?;
+        let rx_finfo = ral.rx_finfo().read()?;
 
-        Ok(RxInfo {
-            frame_length: rx_info.rxflen(),
-            bit_rate: match rx_info.rxbr() {
+        let preamble_length_phr = match rx_finfo.rxpsr() {
+            regs::RxPreambleLength::Symbols16 => phy::PreambleLength::Symbols16,
+            regs::RxPreambleLength::Symbols64 => phy::PreambleLength::Symbols64,
+            regs::RxPreambleLength::Symbols1024 => phy::PreambleLength::Symbols1024,
+            regs::RxPreambleLength::Symbols4096 => phy::PreambleLength::Symbols4096,
+        };
+
+        let sfd_length = u16::from(sfd_type.symbol_length());
+        let acc_count = rx_finfo.rxpacc().max(sfd_length) - sfd_length;
+        let preamble_length_acc = match acc_count {
+            ..=16 => phy::PreambleLength::Symbols16,
+            ..=32 => phy::PreambleLength::Symbols32,
+            ..=64 => phy::PreambleLength::Symbols64,
+            ..=128 => phy::PreambleLength::Symbols128,
+            ..=256 => phy::PreambleLength::Symbols256,
+            ..=512 => phy::PreambleLength::Symbols512,
+            ..=1024 => phy::PreambleLength::Symbols1024,
+            ..=1536 => phy::PreambleLength::Symbols1536,
+            ..=2048 => phy::PreambleLength::Symbols2048,
+            _ => phy::PreambleLength::Symbols4096,
+        };
+
+        Ok(RxFrameInfo {
+            frame_length: rx_finfo.rxflen(),
+            bit_rate: match rx_finfo.rxbr() {
                 regs::BitRate::Kbs850 => phy::BitRate::Kbs850,
                 regs::BitRate::Kbs6810 => phy::BitRate::Kbs6810,
             },
-            phr_ranging_flag: rx_info.rng(),
+            ranging_flag: rx_finfo.rng(),
+            preamble_length_phr: match phr_format {
+                phy::PhrFormat::Standard => Some(preamble_length_phr),
+                phy::PhrFormat::Long => None,
+            },
+            preamble_length_acc,
         })
     }
 
@@ -1130,13 +1173,15 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Ok(None);
         }
 
-        let rx_info = self.get_rx_info()?;
+        let frame_info = self.get_rx_frame_info(run_config.sfd_type, run_config.phr_format)?;
         let timestamp = self.get_fine_rx_timestamp()?;
 
         Ok(Some(phy::RxReport {
-            bit_rate: rx_info.bit_rate,
-            ranging_flag: rx_info.phr_ranging_flag,
-            length: rx_info.frame_length,
+            preamble_length_phr: frame_info.preamble_length_phr,
+            preamble_length_acc: frame_info.preamble_length_acc,
+            bit_rate: frame_info.bit_rate,
+            ranging_flag: frame_info.ranging_flag,
+            length: frame_info.frame_length,
             fcs_good: events.contains(Events::RXFCG),
             timestamp,
         }))
