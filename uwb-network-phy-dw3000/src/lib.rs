@@ -145,11 +145,28 @@ pub enum DeviceError {
 /// Subset of IEEE 802.15.4 HRP UWB channels supported by the DW3000.
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Channel {
-    /// 6489.6 MHz center, 499.2 MHz bandwidth
+enum DevChannel {
     Ch5,
-    /// 7987.2 MHz center, 499.2 MHz bandwidth
     Ch9,
+}
+
+impl DevChannel {
+    fn new(channel: phy::Channel) -> Option<Self> {
+        match channel {
+            phy::Channel::CH_5 => Some(Self::Ch5),
+            phy::Channel::CH_9 => Some(Self::Ch9),
+            _ => None,
+        }
+    }
+}
+
+impl From<DevChannel> for phy::Channel {
+    fn from(channel: DevChannel) -> Self {
+        match channel {
+            DevChannel::Ch5 => Self::CH_5,
+            DevChannel::Ch9 => Self::CH_9,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -249,7 +266,7 @@ impl<'a, IF: Interface> otp::OtpRead for OtpReader<'a, IF> {
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct RfConfig {
-    pub channel: Channel,
+    pub channel: DevChannel,
     pub prf: phy::MeanPrf,
     pub pac: PreambleAcquisitionChunk,
     pub rx_ops: RxOps,
@@ -257,7 +274,7 @@ struct RfConfig {
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct ChannelConfig {
-    pub channel: Channel,
+    pub channel: DevChannel,
     pub rx_code: u8,
     pub tx_code: u8,
 }
@@ -427,6 +444,7 @@ pub struct Dw3000Phy<IF> {
     interface: InterfaceWrapper<IF>,
     otp: OtpData,
     dev_config: DeviceConfig,
+    channel: DevChannel,
     state: InnerState,
 }
 
@@ -479,7 +497,7 @@ impl TxPowerConfig {
 
 #[non_exhaustive]
 pub struct DeviceConfig {
-    pub channel: Channel,
+    pub channel: phy::Channel,
     pub preamble_prf: phy::MeanPrf,
     pub sfd_type: SfdType,
     /// Receiver operating parameter set.
@@ -492,7 +510,7 @@ pub struct DeviceConfig {
 impl Default for DeviceConfig {
     fn default() -> Self {
         Self {
-            channel: Channel::Ch5,
+            channel: phy::Channel::CH_5,
             preamble_prf: phy::MeanPrf::Mhz62,
             sfd_type: SfdType::IeeeSfd0,
             // DW3000 User Manual section 8.2.12.7 recommends this as default over POR.
@@ -517,6 +535,8 @@ impl<IF: Interface> Dw3000Phy<IF> {
             "Unsupported PRF {:?}",
             dev_config.preamble_prf
         );
+        let channel = DevChannel::new(dev_config.channel)
+            .unwrap_or_else(|| panic!("Unsupported channel {:?}", dev_config.channel));
 
         let mut interface = InterfaceWrapper(interface);
         reset_power_up(&mut interface).await?;
@@ -528,6 +548,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
             interface,
             otp,
             dev_config,
+            channel,
             state: InnerState::Stopped,
         })
     }
@@ -575,11 +596,14 @@ impl<IF: Interface> Dw3000Phy<IF> {
     }
 
     // TODO: accept lock_code
-    async fn start_pll(&mut self, channel: Channel) -> Result<(), Error<IF::Error, DeviceError>> {
+    async fn start_pll(
+        &mut self,
+        channel: DevChannel,
+    ) -> Result<(), Error<IF::Error, DeviceError>> {
         let mut ral = self.interface.ral();
         ral.pll_cfg().write_bytes(match channel {
-            Channel::Ch5 => 0x1F3C,
-            Channel::Ch9 => 0x0F3C,
+            DevChannel::Ch5 => 0x1F3C,
+            DevChannel::Ch9 => 0x0F3C,
         })?;
 
         // Note, user manual prescribes such logic, however API skips it
@@ -611,16 +635,16 @@ impl<IF: Interface> Dw3000Phy<IF> {
         if self.otp.rx_tune_set {
             ral.otp_cfg().write(|w| {
                 w.set_dgc_sel(match config.channel {
-                    Channel::Ch5 => regs::Channel::Channel5,
-                    Channel::Ch9 => regs::Channel::Channel9,
+                    DevChannel::Ch5 => regs::Channel::Channel5,
+                    DevChannel::Ch9 => regs::Channel::Channel9,
                 });
                 w.set_dgc_kick(true);
             })?;
         } else {
             ral.dgc_cfg_lut().write(0, &RX_TUNE_DGC_CFG[..8])?;
             let dgc_lut = match config.channel {
-                Channel::Ch5 => &RX_TUNE_DGC_LUT_CH5,
-                Channel::Ch9 => &RX_TUNE_DGC_LUT_CH9,
+                DevChannel::Ch5 => &RX_TUNE_DGC_LUT_CH5,
+                DevChannel::Ch9 => &RX_TUNE_DGC_LUT_CH9,
             };
             ral.dgc_lut().write(0, dgc_lut)?;
         }
@@ -653,13 +677,13 @@ impl<IF: Interface> Dw3000Phy<IF> {
         ral.dtune3().write_bytes(0xaf5f_35cc)?;
 
         // User manual does not describe this register, however API changes its value
-        if config.channel == Channel::Ch9 {
+        if config.channel == DevChannel::Ch9 {
             ral.rf_rx_ctrl_hi().write_bytes(0x08b5_a833)?;
         }
         ral.rf_tx_ctrl1().write_bytes(0x0e)?;
         ral.rf_tx_ctrl2().write_bytes(match config.channel {
-            Channel::Ch5 => 0x1C071134,
-            Channel::Ch9 => 0x1C010034,
+            DevChannel::Ch5 => 0x1C071134,
+            DevChannel::Ch9 => 0x1C010034,
         })?;
         ral.tx_power().write(|w| {
             w.set_data_pwr(self.dev_config.tx_power.data.0);
@@ -737,8 +761,8 @@ impl<IF: Interface> Dw3000Phy<IF> {
         let mut ral = self.interface.ral();
         ral.chan_ctrl().write(|w| {
             w.set_rf_chan(match config.channel {
-                Channel::Ch5 => regs::Channel::Channel5,
-                Channel::Ch9 => regs::Channel::Channel9,
+                DevChannel::Ch5 => regs::Channel::Channel5,
+                DevChannel::Ch9 => regs::Channel::Channel9,
             });
             w.set_sfd_type(match sfd_type {
                 SfdType::IeeeSfd0 => regs::SfdType::IeeeSfd0,
@@ -946,6 +970,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         self.state.into()
     }
 
+    fn channel(&self) -> phy::Channel {
+        self.channel.into()
+    }
+
     fn preamble_prf(&self) -> phy::MeanPrf {
         self.dev_config.preamble_prf
     }
@@ -978,13 +1006,13 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         }
 
         let channel_config = ChannelConfig {
-            channel: self.dev_config.channel,
+            channel: self.channel,
             rx_code: run_config.preamble_code,
             tx_code: run_config.preamble_code,
         };
 
         let base_config = RfConfig {
-            channel: self.dev_config.channel,
+            channel: self.channel,
             prf: self.dev_config.preamble_prf,
             pac: self.dev_config.pac,
             rx_ops: self.dev_config.rx_ops,

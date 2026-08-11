@@ -12,6 +12,53 @@ pub mod functional_tests;
 
 pub const FCS_LENGTH: u16 = 2;
 
+#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Channel(u8);
+
+impl Channel {
+    /// Center 499.2 MHz, Bandwidth 499.2 MHz
+    pub const CH_0: Self = Self(0);
+    /// Center 3494.4 MHz, Bandwidth 499.2 MHz
+    pub const CH_1: Self = Self(1);
+    /// Center 3993.6 MHz, Bandwidth 499.2 MHz
+    pub const CH_2: Self = Self(2);
+    /// Center 4492.8 MHz, Bandwidth 499.2 MHz
+    pub const CH_3: Self = Self(3);
+    /// Center 3993.6 MHz, Bandwidth 1331.2 MHz
+    pub const CH_4: Self = Self(4);
+    /// Center 6489.6 MHz, Bandwidth 499.2 MHz
+    pub const CH_5: Self = Self(5);
+    /// Center 6988.8 MHz, Bandwidth 499.2 MHz
+    pub const CH_6: Self = Self(6);
+    /// Center 6489.6 MHz, Bandwidth 1081.6 MHz
+    pub const CH_7: Self = Self(7);
+    /// Center 7488.0 MHz, Bandwidth 499.2 MHz
+    pub const CH_8: Self = Self(8);
+    /// Center 7987.2 MHz, Bandwidth 499.2 MHz
+    pub const CH_9: Self = Self(9);
+    /// Center 8486.4 MHz, Bandwidth 499.2 MHz
+    pub const CH_10: Self = Self(10);
+    /// Center 7987.2 MHz, Bandwidth 1331.2 MHz
+    pub const CH_11: Self = Self(11);
+    /// Center 8985.6 MHz, Bandwidth 499.2 MHz
+    pub const CH_12: Self = Self(12);
+    /// Center 9484.8 MHz, Bandwidth 499.2 MHz
+    pub const CH_13: Self = Self(13);
+    /// Center 9984.0 MHz, Bandwidth 499.2 MHz
+    pub const CH_14: Self = Self(14);
+    /// Center 9484.8 MHz, Bandwidth 1354.97 MHz
+    pub const CH_15: Self = Self(15);
+
+    pub const fn new_truncating(value: u8) -> Self {
+        Self(value & 0xf)
+    }
+
+    pub const fn as_number(self) -> u8 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MeanPrf {
@@ -268,6 +315,7 @@ pub trait Phy {
     const MAX_RX_FRAME_TIMEOUT: time::Duration;
 
     fn state(&self) -> State;
+    fn channel(&self) -> Channel;
     fn preamble_prf(&self) -> MeanPrf;
     fn sfd_length(&self) -> SfdLength;
     async fn stop(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>>;
