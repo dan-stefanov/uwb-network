@@ -995,9 +995,8 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         // TODO: Check for updates at https://gist.github.com/egnor/455d510e11c22deafdec14b09da5bf54
 
-        if !(self.dev_config.preamble_prf.min_code() <= run_config.preamble_code
-            && run_config.preamble_code <= self.dev_config.preamble_prf.max_code())
-        {
+        let [min_code, max_code] = self.dev_config.preamble_prf.code_range();
+        if !(min_code <= run_config.preamble_code && run_config.preamble_code <= max_code) {
             return Err(OpError::IncompatiblePreambleCode(
                 run_config.preamble_code,
                 self.dev_config.preamble_prf,

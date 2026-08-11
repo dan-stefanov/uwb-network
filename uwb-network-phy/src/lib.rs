@@ -73,19 +73,25 @@ pub enum MeanPrf {
 }
 
 impl MeanPrf {
-    pub const fn min_code(self) -> u8 {
+    pub const fn code_range(self) -> [u8; 2] {
         match self {
-            MeanPrf::Mhz4 | MeanPrf::Mhz16 => 1,
-            MeanPrf::Mhz62 => 9,
-            MeanPrf::Mhz111 => 25,
+            MeanPrf::Mhz4 | MeanPrf::Mhz16 => [1, 8],
+            MeanPrf::Mhz62 => [9, 24],
+            MeanPrf::Mhz111 => [25, 32],
         }
     }
-    pub const fn max_code(self) -> u8 {
-        match self {
-            MeanPrf::Mhz4 | MeanPrf::Mhz16 => 8,
-            MeanPrf::Mhz62 => 24,
-            MeanPrf::Mhz111 => 32,
-        }
+}
+
+pub const fn ieee_allocated_code_range(chan: Channel, prf: MeanPrf) -> [u8; 2] {
+    match (prf, chan.as_number()) {
+        (MeanPrf::Mhz4 | MeanPrf::Mhz16, 0 | 1 | 8 | 12) => [1, 2],
+        (MeanPrf::Mhz4 | MeanPrf::Mhz16, 2 | 5 | 9 | 13) => [3, 4],
+        (MeanPrf::Mhz4 | MeanPrf::Mhz16, 3 | 6 | 10 | 14) => [5, 6],
+        (MeanPrf::Mhz4 | MeanPrf::Mhz16, 4 | 7 | 11 | 15) => [7, 8],
+        (MeanPrf::Mhz62, 0..=3 | 5 | 6 | 8..=10 | 12..=14) => [9, 12],
+        (MeanPrf::Mhz62, 4 | 7 | 11 | 15) => [17, 20],
+        (MeanPrf::Mhz111, 0..=15) => [25, 32],
+        (_, 16..) => core::unreachable!(),
     }
 }
 

@@ -18,9 +18,9 @@ where
 {
     info!("Run as initiator");
 
-    let preamble_code = phy.preamble_prf().min_code();
+    let [min_code, _] = phy::ieee_allocated_code_range(phy.channel(), phy.preamble_prf());
     let run_config = phy::RunConfig {
-        preamble_code: preamble_code,
+        preamble_code: min_code,
         correct_tx_fcs: true,
         ..Default::default()
     };
@@ -62,10 +62,10 @@ where
     info!("Run as responder");
 
     info!("Configure");
-    let preamble_code = phy.preamble_prf().min_code();
 
+    let [min_code, _] = phy::ieee_allocated_code_range(phy.channel(), phy.preamble_prf());
     let run_config = phy::RunConfig {
-        preamble_code: preamble_code,
+        preamble_code: min_code,
         ..Default::default()
     };
 
