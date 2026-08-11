@@ -843,16 +843,16 @@ impl<IF: Interface> Dw3000Phy<IF> {
         let sfd_length = u16::from(sfd_type.symbol_length());
         let acc_count = rx_finfo.rxpacc().max(sfd_length) - sfd_length;
         let preamble_length_acc = match acc_count {
-            ..=16 => phy::PreambleLength::Symbols16,
-            ..=32 => phy::PreambleLength::Symbols32,
-            ..=64 => phy::PreambleLength::Symbols64,
-            ..=128 => phy::PreambleLength::Symbols128,
-            ..=256 => phy::PreambleLength::Symbols256,
-            ..=512 => phy::PreambleLength::Symbols512,
-            ..=1024 => phy::PreambleLength::Symbols1024,
-            ..=1536 => phy::PreambleLength::Symbols1536,
-            ..=2048 => phy::PreambleLength::Symbols2048,
-            _ => phy::PreambleLength::Symbols4096,
+            0..=16 => phy::PreambleLength::Symbols16,
+            17..=32 => phy::PreambleLength::Symbols32,
+            33..=64 => phy::PreambleLength::Symbols64,
+            65..=128 => phy::PreambleLength::Symbols128,
+            129..=256 => phy::PreambleLength::Symbols256,
+            257..=512 => phy::PreambleLength::Symbols512,
+            513..=1024 => phy::PreambleLength::Symbols1024,
+            1025..=1536 => phy::PreambleLength::Symbols1536,
+            1537..=2048 => phy::PreambleLength::Symbols2048,
+            2049.. => phy::PreambleLength::Symbols4096,
         };
 
         Ok(RxFrameInfo {
