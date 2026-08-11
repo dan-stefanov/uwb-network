@@ -315,6 +315,7 @@ reg_field!(0x04, 0x1c, 4, RxCalResq, RW, (), "RX calibration block result Q");
 reg_bytes!(0x04, 0x20, 1, RxCalSts, RC, (), "RX calibration status");
 
 reg_field!(0x06, 0x00, 2, Dtune0, RW, 0x101c, "Digital tuning register 0");
+reg_field!(0x06, 0x02, 4, RxPreSfdToc, RW, 0x0000_0041, "Combined Preamble and SFD detection timeout");
 reg_bytes!(0x06, 0x02, 2, RxSfdToc, RW, (), "SFD detection timeout");
 reg_bytes!(0x06, 0x04, 2, PreToc, RW, (), "Preamble detection timeout");
 reg_bytes!(0x06, 0x0c, 4, Dtune3, RW, (), "Digital tuning register 3");
@@ -463,6 +464,9 @@ field_prim!(RxCalResq, 0, 29, resq, u32, "Calibration result Q");
 field_enum!(Dtune0, 0, 2, pac, u8, Pac, "Preamble acquisition chunk size");
 // bits 2-3 - reserved
 field_bool!(Dtune0, 4, dt0b4, "Undocumented bit");
+
+field_prim!(RxPreSfdToc, 0, 16, sfd_toc, u16, "SFD detection timeout count");
+field_prim!(RxPreSfdToc, 16, 32, pre_toc, u16, "Preamble detection timeout count");
 
 field_prim!(LdoTune, 0, 60, ldo_tune, u64, "Internal LDO voltage tuning parameter");
 
