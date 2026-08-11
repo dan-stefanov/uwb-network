@@ -250,7 +250,7 @@ impl<'a, IF: Interface> otp::OtpRead for OtpReader<'a, IF> {
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct RfConfig {
     pub channel: Channel,
-    pub prf: phy::Prf,
+    pub prf: phy::MeanPrf,
     pub pac: PreambleAcquisitionChunk,
     pub rx_ops: RxOps,
 }
@@ -258,8 +258,8 @@ struct RfConfig {
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct ChannelConfig {
     pub channel: Channel,
-    pub rx_code: phy::PreambleCode,
-    pub tx_code: phy::PreambleCode,
+    pub rx_code: u8,
+    pub tx_code: u8,
 }
 
 #[allow(dead_code)]
@@ -480,6 +480,7 @@ impl TxPowerConfig {
 #[non_exhaustive]
 pub struct DeviceConfig {
     pub channel: Channel,
+    pub preamble_prf: phy::MeanPrf,
     pub sfd_type: SfdType,
     /// Receiver operating parameter set.
     pub rx_ops: RxOps,
@@ -492,6 +493,7 @@ impl Default for DeviceConfig {
     fn default() -> Self {
         Self {
             channel: Channel::Ch5,
+            preamble_prf: phy::MeanPrf::Mhz62,
             sfd_type: SfdType::IeeeSfd0,
             // DW3000 User Manual section 8.2.12.7 recommends this as default over POR.
             rx_ops: RxOps::ShortPreamble,
@@ -506,6 +508,16 @@ impl<IF: Interface> Dw3000Phy<IF> {
         interface: IF,
         dev_config: DeviceConfig,
     ) -> Result<Self, Error<IF::Error, DeviceError>> {
+        // TODO: Return an error code
+        assert!(
+            matches!(
+                dev_config.preamble_prf,
+                phy::MeanPrf::Mhz16 | phy::MeanPrf::Mhz62
+            ),
+            "Unsupported PRF {:?}",
+            dev_config.preamble_prf
+        );
+
         let mut interface = InterfaceWrapper(interface);
         reset_power_up(&mut interface).await?;
         check_dev_id(&mut interface).await?;
@@ -623,7 +635,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         })?;
 
         ral.dgc_cfg().write(|w| {
-            w.set_rx_tune_en(config.prf == phy::Prf::Mhz64);
+            w.set_rx_tune_en(config.prf == phy::MeanPrf::Mhz62);
             w.set_thr_64(0x32);
         })?;
 
@@ -734,8 +746,8 @@ impl<IF: Interface> Dw3000Phy<IF> {
                 SfdType::Decawave16 => regs::SfdType::Decawave16,
                 SfdType::IeeeSfd2 => regs::SfdType::IeeeSfd2,
             });
-            w.set_tx_pcode(config.tx_code.as_number());
-            w.set_rx_pcode(config.rx_code.as_number());
+            w.set_tx_pcode(config.tx_code);
+            w.set_rx_pcode(config.rx_code);
         })?;
         Ok(())
     }
@@ -934,6 +946,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         self.state.into()
     }
 
+    fn preamble_prf(&self) -> phy::MeanPrf {
+        self.dev_config.preamble_prf
+    }
+
     fn sfd_length(&self) -> phy::SfdLength {
         self.dev_config.sfd_type.length()
     }
@@ -951,6 +967,16 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         // TODO: Check for updates at https://gist.github.com/egnor/455d510e11c22deafdec14b09da5bf54
 
+        if !(self.dev_config.preamble_prf.min_code() <= run_config.preamble_code
+            && run_config.preamble_code <= self.dev_config.preamble_prf.max_code())
+        {
+            return Err(OpError::IncompatiblePreambleCode(
+                run_config.preamble_code,
+                self.dev_config.preamble_prf,
+            )
+            .into());
+        }
+
         let channel_config = ChannelConfig {
             channel: self.dev_config.channel,
             rx_code: run_config.preamble_code,
@@ -959,7 +985,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
         let base_config = RfConfig {
             channel: self.dev_config.channel,
-            prf: run_config.preamble_code.prf(),
+            prf: self.dev_config.preamble_prf,
             pac: self.dev_config.pac,
             rx_ops: self.dev_config.rx_ops,
         };
@@ -1077,7 +1103,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         }
 
         let shr_duration = phy::shr_duration(
-            run_config.preamble_code.prf(),
+            self.dev_config.preamble_prf,
             self.sfd_length(),
             tx_config.preamble_length,
         );

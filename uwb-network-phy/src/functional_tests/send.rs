@@ -8,11 +8,6 @@ const RX_DELAY: Duration = Duration::RSTU.mul_u32(1000);
 const RX_TIMEOUT: Duration = Duration::RSTU.mul_u32(1_000_000);
 
 const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
-const RUN_CONFIG: phy::RunConfig = {
-    let mut config = phy::RunConfig::new();
-    config.correct_tx_fcs = true;
-    config
-};
 
 pub async fn initiator<PHY>(phy: &mut PHY)
 where
@@ -23,8 +18,15 @@ where
 {
     info!("Run as initiator");
 
+    let preamble_code = phy.preamble_prf().min_code();
+    let run_config = phy::RunConfig {
+        preamble_code: preamble_code,
+        correct_tx_fcs: true,
+        ..Default::default()
+    };
+
     info!("Configure");
-    phy.start(RUN_CONFIG).await.unwrap();
+    phy.start(run_config).await.unwrap();
 
     let psdu = {
         let mut psdu = Vec::<u8, { MAX_PSDU_SIZE }>::new();
@@ -60,7 +62,14 @@ where
     info!("Run as responder");
 
     info!("Configure");
-    phy.start(RUN_CONFIG).await.unwrap();
+    let preamble_code = phy.preamble_prf().min_code();
+
+    let run_config = phy::RunConfig {
+        preamble_code: preamble_code,
+        ..Default::default()
+    };
+
+    phy.start(run_config).await.unwrap();
 
     loop {
         let mut psdu = Vec::<u8, { MAX_PSDU_SIZE }>::new();

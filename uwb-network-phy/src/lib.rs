@@ -14,44 +14,30 @@ pub const FCS_LENGTH: u16 = 2;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Prf {
+pub enum MeanPrf {
+    /// 31-symbols preambles, CHIP_FREQ / 64
+    Mhz4,
+    /// 31-symbols preambles, CHIP_FREQ / 16
     Mhz16,
-    Mhz64,
+    /// 127-symbols preambles, CHIP_FREQ / 4
+    Mhz62,
+    /// 91-symbols preambles, CHIP_FREQ / 4, IEEE 802.15.4z
+    Mhz111,
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum PreambleCode {
-    /// 16MHz PRF
-    Code3 = 3,
-    /// 16MHz PRF
-    Code4 = 4,
-    /// 64MHz PRF
-    Code9 = 9,
-    /// 64MHz PRF
-    Code10 = 10,
-    /// 64MHz PRF
-    Code11 = 11,
-    /// 64MHz PRF
-    Code12 = 12,
-}
-
-impl PreambleCode {
-    pub const fn as_number(self) -> u8 {
-        self as u8
-    }
-
-    pub const fn prf(self) -> Prf {
-        // See tables 15-6 and 15-7 for code length
-        // See table 15-4 for allowed PFR for code length
+impl MeanPrf {
+    pub const fn min_code(self) -> u8 {
         match self {
-            PreambleCode::Code3 => Prf::Mhz16,  // 31 chip code
-            PreambleCode::Code4 => Prf::Mhz16,  // 31 chip code
-            PreambleCode::Code9 => Prf::Mhz64,  // 123 chip code
-            PreambleCode::Code10 => Prf::Mhz64, // 123 chip code
-            PreambleCode::Code11 => Prf::Mhz64, // 123 chip code
-            PreambleCode::Code12 => Prf::Mhz64, // 123 chip code
+            MeanPrf::Mhz4 | MeanPrf::Mhz16 => 1,
+            MeanPrf::Mhz62 => 9,
+            MeanPrf::Mhz111 => 25,
+        }
+    }
+    pub const fn max_code(self) -> u8 {
+        match self {
+            MeanPrf::Mhz4 | MeanPrf::Mhz16 => 8,
+            MeanPrf::Mhz62 => 24,
+            MeanPrf::Mhz111 => 32,
         }
     }
 }
@@ -153,7 +139,7 @@ pub enum State {
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RunConfig {
-    pub preamble_code: PreambleCode,
+    pub preamble_code: u8,
     pub phr_format: PhrFormat,
     /// Match PHR bit rate to the PSDU bit rate
     ///
@@ -163,21 +149,16 @@ pub struct RunConfig {
     pub correct_tx_fcs: bool,
 }
 
-impl RunConfig {
-    // TODO: make presets for IEEE operation parameter sets, see 15.7
-    pub const fn new() -> Self {
+// Preamble code depends on chosen PRF
+// TODO: remove default
+impl Default for RunConfig {
+    fn default() -> Self {
         Self {
-            preamble_code: PreambleCode::Code9,
+            preamble_code: 0,
             phr_format: PhrFormat::Standard,
             high_phr_bit_rate: false,
             correct_tx_fcs: false,
         }
-    }
-}
-
-impl Default for RunConfig {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -243,6 +224,7 @@ pub struct RxReport<T> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OpError {
     ProhibitedInCurrentState(State),
+    IncompatiblePreambleCode(u8, MeanPrf),
     ExcessiveRxTimeout(time::Duration),
     StartInstantPassed(time::Duration),
     BufferAccessBeyondPhrFormat(usize, PhrFormat),
@@ -286,6 +268,7 @@ pub trait Phy {
     const MAX_RX_FRAME_TIMEOUT: time::Duration;
 
     fn state(&self) -> State;
+    fn preamble_prf(&self) -> MeanPrf;
     fn sfd_length(&self) -> SfdLength;
     async fn stop(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>>;
     async fn start(
@@ -324,10 +307,12 @@ pub trait Phy {
 }
 
 // See IEEE 802.15.4-2020, Table 15-5
-pub const fn preamble_symbol_duration(prf: Prf) -> time::Duration {
+pub const fn preamble_symbol_duration(prf: MeanPrf) -> time::Duration {
     match prf {
-        Prf::Mhz16 => time::Duration::CHIP.mul_u32(496),
-        Prf::Mhz64 => time::Duration::CHIP.mul_u32(508),
+        MeanPrf::Mhz4 => time::Duration::CHIP.mul_u32(31 * 64),
+        MeanPrf::Mhz16 => time::Duration::CHIP.mul_u32(31 * 16),
+        MeanPrf::Mhz62 => time::Duration::CHIP.mul_u32(127 * 4),
+        MeanPrf::Mhz111 => time::Duration::CHIP.mul_u32(91 * 4),
     }
 }
 
@@ -340,7 +325,7 @@ pub const fn psdu_symbol_duration(bit_rate: BitRate) -> time::Duration {
 }
 
 pub const fn shr_duration(
-    prf: Prf,
+    prf: MeanPrf,
     sfd_length: SfdLength,
     preamble_length: PreambleLength,
 ) -> time::Duration {

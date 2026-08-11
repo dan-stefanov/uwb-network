@@ -1,7 +1,7 @@
 use crate::mac::format;
 use crate::phy;
 use crate::phy::time::Duration;
-use crate::phy::{BitRate, PhrFormat, PreambleCode, PreambleLength};
+use crate::phy::{BitRate, PreambleLength};
 use crate::psdu::{PsduContainer, StaticPsdu};
 use core::num::NonZero;
 use embassy_time::Timer;
@@ -13,13 +13,6 @@ const TURNAROUND_DURATION: Duration = Duration::RSTU.mul_u32(1000);
 const SLOT_COUNT: u8 = 5;
 
 const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
-
-const RUN_CONFIG: phy::RunConfig = phy::RunConfig {
-    preamble_code: PreambleCode::Code9,
-    phr_format: PhrFormat::Standard,
-    high_phr_bit_rate: false,
-    correct_tx_fcs: true,
-};
 
 const RX_CONFIG: phy::RxConfig = phy::RxConfig {
     max_preamble_length: PreambleLength::Symbols64,
@@ -42,10 +35,19 @@ where
     info!("Run as initiator");
 
     info!("Configure");
-    phy.start(RUN_CONFIG).await.unwrap();
+
+    let preamble_code = phy.preamble_prf().min_code();
+    let run_config = phy::RunConfig {
+        preamble_code: preamble_code,
+        correct_tx_fcs: true,
+        ..Default::default()
+    };
+
+    phy.start(run_config).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
+
     let shr_duration = phy::shr_duration(
-        RUN_CONFIG.preamble_code.prf(),
+        phy.preamble_prf(),
         phy.sfd_length(),
         TX_CONFIG.preamble_length,
     );
@@ -142,10 +144,18 @@ where
     info!("Run as responder");
 
     info!("Configure");
-    phy.start(RUN_CONFIG).await.unwrap();
+    let preamble_code = phy.preamble_prf().min_code();
+    let run_config = phy::RunConfig {
+        preamble_code: preamble_code,
+        correct_tx_fcs: true,
+        ..Default::default()
+    };
+
+    phy.start(run_config).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
+
     let shr_duration = phy::shr_duration(
-        RUN_CONFIG.preamble_code.prf(),
+        phy.preamble_prf(),
         phy.sfd_length(),
         TX_CONFIG.preamble_length,
     );

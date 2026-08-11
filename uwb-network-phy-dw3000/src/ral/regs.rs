@@ -135,7 +135,7 @@ pub enum CalibrationMode {
 pub enum RxPfr {
     _Reserved00 = 0b00,
     Mhz16 = 0b01,
-    Mhz64 = 0b10,
+    Mhz62 = 0b10,
     _Reserved11 = 0b11,
 }
 
