@@ -152,6 +152,28 @@ pub enum Channel {
     Ch9,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum SfdType {
+    /// 0+0-+00-, IEEE 802.15.4 short 8-symbol SFD
+    IeeeSfd0,
+    /// ----+-00, Decawave-defined 8-symbols SFD
+    Decawave8,
+    /// ----+-+--++--+00, Decawave-defined 16-symbols SFD
+    Decawave16,
+    /// ---+--+-, IEEE 802.15.4z defined 8-symbol SFD
+    IeeeSfd2,
+}
+
+impl SfdType {
+    const fn length(self) -> phy::SfdLength {
+        match self {
+            SfdType::IeeeSfd0 | SfdType::Decawave8 | SfdType::IeeeSfd2 => phy::SfdLength::Symbols8,
+            SfdType::Decawave16 => phy::SfdLength::Symbols16,
+        }
+    }
+}
+
 /// DW3000 receiver operating parameter set.
 ///
 /// Check DW3000 User Manual section 8.2.12.7 for details.
@@ -238,7 +260,6 @@ struct ChannelConfig {
     pub channel: Channel,
     pub rx_code: phy::PreambleCode,
     pub tx_code: phy::PreambleCode,
-    pub sfd_type: phy::SfdType,
 }
 
 #[allow(dead_code)]
@@ -459,6 +480,7 @@ impl TxPowerConfig {
 #[non_exhaustive]
 pub struct DeviceConfig {
     pub channel: Channel,
+    pub sfd_type: SfdType,
     /// Receiver operating parameter set.
     pub rx_ops: RxOps,
     /// Preamble acquisition chunk size.
@@ -470,6 +492,7 @@ impl Default for DeviceConfig {
     fn default() -> Self {
         Self {
             channel: Channel::Ch5,
+            sfd_type: SfdType::IeeeSfd0,
             // DW3000 User Manual section 8.2.12.7 recommends this as default over POR.
             rx_ops: RxOps::ShortPreamble,
             pac: PreambleAcquisitionChunk::Symbols8,
@@ -698,15 +721,18 @@ impl<IF: Interface> Dw3000Phy<IF> {
     }
 
     fn set_channel(&mut self, config: ChannelConfig) -> Result<(), Error<IF::Error, DeviceError>> {
+        let sfd_type = self.dev_config.sfd_type;
         let mut ral = self.interface.ral();
         ral.chan_ctrl().write(|w| {
             w.set_rf_chan(match config.channel {
                 Channel::Ch5 => regs::Channel::Channel5,
                 Channel::Ch9 => regs::Channel::Channel9,
             });
-            w.set_sfd_type(match config.sfd_type {
-                phy::SfdType::Sfd0 => regs::SfdType::Ieee802154,
-                phy::SfdType::Sfd2 => regs::SfdType::Ieee802154z,
+            w.set_sfd_type(match sfd_type {
+                SfdType::IeeeSfd0 => regs::SfdType::IeeeSfd0,
+                SfdType::Decawave8 => regs::SfdType::Decawave8,
+                SfdType::Decawave16 => regs::SfdType::Decawave16,
+                SfdType::IeeeSfd2 => regs::SfdType::IeeeSfd2,
             });
             w.set_tx_pcode(config.tx_code.as_number());
             w.set_rx_pcode(config.rx_code.as_number());
@@ -791,12 +817,11 @@ impl<IF: Interface> Dw3000Phy<IF> {
     fn set_sfd_timeout(
         &mut self,
         max_preamble_length: phy::PreambleLength,
-        sfd_type: phy::SfdType,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
         // UserManual discourage disabling timeout
         // DW3000 UM, 8.2.7.2
         let max_preamble_length = max_preamble_length.as_symbols();
-        let sfd_length: u16 = sfd_type.symbol_length().into();
+        let sfd_length = u16::from(u8::from(self.dev_config.sfd_type.length()));
         let pac_size: u16 = self.dev_config.pac.as_symbols().into();
         let symbols = max_preamble_length.max(pac_size) - pac_size + sfd_length + 1;
 
@@ -827,7 +852,6 @@ impl<IF: Interface> Dw3000Phy<IF> {
 
     fn get_rx_frame_info(
         &mut self,
-        sfd_type: phy::SfdType,
         phr_format: phy::PhrFormat,
     ) -> Result<RxFrameInfo, Error<IF::Error, DeviceError>> {
         let mut ral = self.interface.ral();
@@ -840,7 +864,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
             regs::RxPreambleLength::Symbols4096 => phy::PreambleLength::Symbols4096,
         };
 
-        let sfd_length = u16::from(sfd_type.symbol_length());
+        let sfd_length = u16::from(u8::from(self.dev_config.sfd_type.length()));
         let acc_count = rx_finfo.rxpacc().max(sfd_length) - sfd_length;
         let preamble_length_acc = match acc_count {
             0..=16 => phy::PreambleLength::Symbols16,
@@ -910,6 +934,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         self.state.into()
     }
 
+    fn sfd_length(&self) -> phy::SfdLength {
+        self.dev_config.sfd_type.length()
+    }
+
     // TODO: go to sleep instead of shutdown
     async fn stop(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>> {
         self.shutdown()?;
@@ -927,7 +955,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             channel: self.dev_config.channel,
             rx_code: run_config.preamble_code,
             tx_code: run_config.preamble_code,
-            sfd_type: run_config.sfd_type,
         };
 
         let base_config = RfConfig {
@@ -1051,7 +1078,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
         let shr_duration = phy::shr_duration(
             run_config.preamble_code.prf(),
-            run_config.sfd_type,
+            self.sfd_length(),
             tx_config.preamble_length,
         );
         let rmarker_at = start_at + shr_duration;
@@ -1129,7 +1156,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(Error::Operation(OpError::ExcessiveRxTimeout(rx_timeout)));
         }
 
-        self.set_sfd_timeout(rx_config.max_preamble_length, run_config.sfd_type)?;
+        self.set_sfd_timeout(rx_config.max_preamble_length)?;
         self.set_preamble_timeout(self.dev_config.pac, rx_config.max_preamble_hunt)?;
         self.set_dx_time(start_at)?;
         self.set_rx_frame_timeout(rx_timeout)?;
@@ -1173,7 +1200,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Ok(None);
         }
 
-        let frame_info = self.get_rx_frame_info(run_config.sfd_type, run_config.phr_format)?;
+        let frame_info = self.get_rx_frame_info(run_config.phr_format)?;
         let timestamp = self.get_fine_rx_timestamp()?;
 
         Ok(Some(phy::RxReport {

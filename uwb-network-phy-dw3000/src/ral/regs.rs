@@ -56,10 +56,10 @@ pub enum Channel {
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum SfdType {
-    Ieee802154 = 0,
+    IeeeSfd0 = 0,
     Decawave8 = 1,
     Decawave16 = 2,
-    Ieee802154z = 3,
+    IeeeSfd2 = 3,
 }
 
 #[repr(u8)]

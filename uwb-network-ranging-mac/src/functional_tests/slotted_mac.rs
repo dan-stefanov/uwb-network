@@ -1,7 +1,7 @@
 use crate::mac::format;
 use crate::phy;
 use crate::phy::time::Duration;
-use crate::phy::{BitRate, PhrFormat, PreambleCode, PreambleLength, SfdType};
+use crate::phy::{BitRate, PhrFormat, PreambleCode, PreambleLength};
 use crate::psdu::{PsduContainer, StaticPsdu};
 use core::num::NonZero;
 use embassy_time::Timer;
@@ -16,7 +16,6 @@ const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize
 
 const RUN_CONFIG: phy::RunConfig = phy::RunConfig {
     preamble_code: PreambleCode::Code9,
-    sfd_type: SfdType::Sfd0,
     phr_format: PhrFormat::Standard,
     high_phr_bit_rate: false,
     correct_tx_fcs: true,
@@ -33,12 +32,6 @@ const TX_CONFIG: phy::TxConfig = phy::TxConfig {
     ranging_flag: false,
 };
 
-const SHR_DURATION: Duration = phy::shr_duration(
-    RUN_CONFIG.preamble_code.prf(),
-    RUN_CONFIG.sfd_type,
-    TX_CONFIG.preamble_length,
-);
-
 pub async fn initiator<PHY>(phy: &mut PHY)
 where
     PHY: phy::Phy,
@@ -51,6 +44,11 @@ where
     info!("Configure");
     phy.start(RUN_CONFIG).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
+    let shr_duration = phy::shr_duration(
+        RUN_CONFIG.preamble_code.prf(),
+        phy.sfd_length(),
+        TX_CONFIG.preamble_length,
+    );
 
     let mut beacon_psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
     {
@@ -112,7 +110,7 @@ where
         phy.transmit(
             TX_CONFIG,
             unwrap!(u16::try_from(beacon_psdu.len())),
-            super_frame_start + SHR_DURATION,
+            super_frame_start + shr_duration,
         )
         .await
         .unwrap();
@@ -125,7 +123,7 @@ where
             phy.transmit(
                 TX_CONFIG,
                 unwrap!(u16::try_from(slot_psdu.len())),
-                super_frame_start + (i as u32) * SLOT_DURATION + SHR_DURATION,
+                super_frame_start + (i as u32) * SLOT_DURATION + shr_duration,
             )
             .await
             .unwrap();
@@ -146,6 +144,11 @@ where
     info!("Configure");
     phy.start(RUN_CONFIG).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
+    let shr_duration = phy::shr_duration(
+        RUN_CONFIG.preamble_code.prf(),
+        phy.sfd_length(),
+        TX_CONFIG.preamble_length,
+    );
 
     loop {
         let mut psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
@@ -171,7 +174,7 @@ where
             phy.read_rx_buffer(psdu.as_mut_slice()).await.unwrap();
             display_beacon_report(status, psdu.as_slice());
 
-            let super_frame_start = report.timestamp - SHR_DURATION;
+            let super_frame_start = report.timestamp - shr_duration;
 
             for i in 1..SLOT_COUNT {
                 let status = phy

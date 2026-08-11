@@ -98,23 +98,20 @@ impl PreambleLength {
     }
 }
 
-/// Subset of IEEE802.15.4z SFD sequence list, see phyHrpUwbSfdSelector
+#[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum SfdType {
-    /// 8 symbols, supported by IEEE802.15.4 and IEEE802.15.4z
-    Sfd0,
-    /// 8 symbols, better SNR, IEEE802.15.4z only
-    Sfd2,
+pub enum SfdLength {
+    Symbols4 = 4,
+    Symbols8 = 8,
+    Symbols16 = 16,
+    Symbols32 = 32,
+    Symbols64 = 64,
 }
 
-impl SfdType {
-    /// Length of SFD in preamble symbols
-    pub const fn symbol_length(self) -> u8 {
-        match self {
-            SfdType::Sfd0 => 8,
-            SfdType::Sfd2 => 8,
-        }
+impl From<SfdLength> for u8 {
+    fn from(value: SfdLength) -> Self {
+        value as Self
     }
 }
 
@@ -157,7 +154,6 @@ pub enum State {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RunConfig {
     pub preamble_code: PreambleCode,
-    pub sfd_type: SfdType,
     pub phr_format: PhrFormat,
     /// Match PHR bit rate to the PSDU bit rate
     ///
@@ -172,7 +168,6 @@ impl RunConfig {
     pub const fn new() -> Self {
         Self {
             preamble_code: PreambleCode::Code9,
-            sfd_type: SfdType::Sfd0,
             phr_format: PhrFormat::Standard,
             high_phr_bit_rate: false,
             correct_tx_fcs: false,
@@ -291,6 +286,7 @@ pub trait Phy {
     const MAX_RX_FRAME_TIMEOUT: time::Duration;
 
     fn state(&self) -> State;
+    fn sfd_length(&self) -> SfdLength;
     async fn stop(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>>;
     async fn start(
         &mut self,
@@ -345,13 +341,12 @@ pub const fn psdu_symbol_duration(bit_rate: BitRate) -> time::Duration {
 
 pub const fn shr_duration(
     prf: Prf,
-    sfd_type: SfdType,
+    sfd_length: SfdLength,
     preamble_length: PreambleLength,
 ) -> time::Duration {
     let preamble_symbol_duration = preamble_symbol_duration(prf);
     let sync_length = preamble_length.as_symbols();
-    let sfd_length = sfd_type.symbol_length();
-    let shr_length = sync_length + sfd_length as u16;
+    let shr_length = sync_length + sfd_length as u8 as u16;
     preamble_symbol_duration.mul_u32(shr_length as u32)
 }
 
