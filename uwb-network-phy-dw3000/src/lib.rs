@@ -823,6 +823,19 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(state.pmsc_state() == PMSC_TX && state.tx_state() == TX_IDLE)
     }
 
+    fn set_preamble_timeout(
+        &mut self,
+        pac: PreambleAcquisitionChunk,
+        timeout: Option<NonZeroU16>,
+    ) -> Result<(), Error<IF::Error, DeviceError>> {
+        let preamble_toc = timeout.map_or(0, |count| {
+            u16::from(count).div_ceil(pac.as_symbols().into())
+        });
+        let mut ral = self.interface.ral();
+        ral.pre_toc().write_bytes(preamble_toc)?;
+        Ok(())
+    }
+
     fn set_rx_frame_timeout(
         &mut self,
         timeout: Duration,
@@ -837,9 +850,8 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(())
     }
 
-    fn set_rx_preamble_sfd_timeout(
+    fn set_sfd_timeout(
         &mut self,
-        max_preamble_hunt: Option<NonZeroU16>,
         max_preamble_length: phy::PreambleLength,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
         // UserManual discourage disabling timeout
@@ -847,14 +859,11 @@ impl<IF: Interface> Dw3000Phy<IF> {
         let max_preamble_length = max_preamble_length.as_symbols();
         let sfd_length = u16::from(u8::from(self.dev_config.sfd_type.length()));
         let pac_size: u16 = self.dev_config.pac.as_symbols().into();
-        let sfd_toc = max_preamble_length.max(pac_size) - pac_size + sfd_length + 1;
-        let pre_toc = max_preamble_hunt.map_or(0, |count| u16::from(count).div_ceil(pac_size));
+        let symbols = max_preamble_length.max(pac_size) - pac_size + sfd_length + 1;
 
         let mut ral = self.interface.ral();
-        ral.rx_pre_sfd_toc().write(|w| {
-            w.set_sfd_toc(sfd_toc);
-            w.set_pre_toc(pre_toc);
-        })?;
+        assert_ne!(symbols, 0);
+        ral.rx_sfd_toc().write_bytes(symbols)?;
         Ok(())
     }
 
@@ -1200,10 +1209,8 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(Error::Operation(OpError::ExcessiveRxTimeout(rx_timeout)));
         }
 
-        self.set_rx_preamble_sfd_timeout(
-            rx_config.max_preamble_hunt,
-            rx_config.max_preamble_length,
-        )?;
+        self.set_sfd_timeout(rx_config.max_preamble_length)?;
+        self.set_preamble_timeout(self.dev_config.pac, rx_config.max_preamble_hunt)?;
         self.set_dx_time(start_at)?;
         self.set_rx_frame_timeout(rx_timeout)?;
 
