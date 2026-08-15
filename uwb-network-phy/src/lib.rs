@@ -2,6 +2,11 @@
 
 use core::num::NonZeroU16;
 
+#[cfg(not(feature = "defmt"))]
+use bitflags::bitflags;
+#[cfg(feature = "defmt")]
+use defmt::bitflags;
+
 // This mod MUST go first, so that the others see its macros.
 pub(crate) mod fmt;
 
@@ -180,6 +185,68 @@ impl PhrFormat {
     }
 }
 
+bitflags! {
+    #[cfg_attr(not(feature = "defmt"), derive(Clone, Copy, Eq, PartialEq, Debug))]
+    pub struct Capabilities: u32 {
+        const CH_0 = 1 << Channel::CH_0.as_number();
+        const CH_1 = 1 << Channel::CH_1.as_number();
+        const CH_2 = 1 << Channel::CH_2.as_number();
+        const CH_3 = 1 << Channel::CH_3.as_number();
+        const CH_4 = 1 << Channel::CH_4.as_number();
+        const CH_5 = 1 << Channel::CH_5.as_number();
+        const CH_6 = 1 << Channel::CH_6.as_number();
+        const CH_7 = 1 << Channel::CH_7.as_number();
+        const CH_8 = 1 << Channel::CH_8.as_number();
+        const CH_9 = 1 << Channel::CH_9.as_number();
+        const CH_10 = 1 << Channel::CH_10.as_number();
+        const CH_11 = 1 << Channel::CH_11.as_number();
+        const CH_12 = 1 << Channel::CH_12.as_number();
+        const CH_13 = 1 << Channel::CH_13.as_number();
+        const CH_14 = 1 << Channel::CH_14.as_number();
+        const CH_15 = 1 << Channel::CH_15.as_number();
+
+        const PSR_16 = 1 << 16;
+        const PSR_32 = 1 << 17;
+        const PSR_64 = 1 << 18;
+        const PSR_128 = 1 << 19;
+        const PSR_256 = 1 << 20;
+        const PSR_512 = 1 << 21;
+        const PSR_1024 = 1 << 22;
+        const PSR_1536 = 1 << 23;
+        const PSR_2048 = 1 << 24;
+        const PSR_4096 = 1 << 25;
+    }
+}
+
+impl Capabilities {
+    pub fn has_channel(self, channel: Channel) -> bool {
+        self.contains(Self::from_channel(channel))
+    }
+
+    pub fn has_psr(self, psr: Psr) -> bool {
+        self.contains(Self::from_psr(psr))
+    }
+
+    const fn from_channel(channel: Channel) -> Self {
+        Self::from_bits_truncate(1 << channel.as_number())
+    }
+
+    const fn from_psr(psr: Psr) -> Self {
+        match psr {
+            Psr::Symbols16 => Self::PSR_16,
+            Psr::Symbols32 => Self::PSR_32,
+            Psr::Symbols64 => Self::PSR_64,
+            Psr::Symbols128 => Self::PSR_128,
+            Psr::Symbols256 => Self::PSR_256,
+            Psr::Symbols512 => Self::PSR_512,
+            Psr::Symbols1024 => Self::PSR_1024,
+            Psr::Symbols1536 => Self::PSR_1536,
+            Psr::Symbols2048 => Self::PSR_2048,
+            Psr::Symbols4096 => Self::PSR_4096,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum State {
@@ -266,6 +333,7 @@ pub struct RxReport<T> {
 pub enum OpError {
     ProhibitedInCurrentState(State),
     IncompatiblePreambleCode(u8, MeanPrf),
+    UnsupportedPsr(Psr),
     ExcessiveRxTimeout(time::Duration),
     StartInstantPassed(time::Duration),
     BufferAccessBeyondPhrFormat(usize, PhrFormat),
@@ -309,6 +377,7 @@ pub trait Phy {
     const MAX_RX_FRAME_TIMEOUT: time::Duration;
 
     fn state(&self) -> State;
+    fn capabilities(&self) -> Capabilities;
     fn channel(&self) -> Channel;
     fn preamble_prf(&self) -> MeanPrf;
     fn sfd_length(&self) -> SfdLength;

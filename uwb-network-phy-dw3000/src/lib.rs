@@ -34,6 +34,18 @@ const RX_CALIBRATION_POLL_PERIOD_US: u32 = 20_000;
 const RX_FRAME_TIMEOUT_UNIT: Duration = Duration::CHIP.mul_u32(512);
 const MAX_RX_FRAME_TIMEOUT: Duration = RX_FRAME_TIMEOUT_UNIT.mul_u32((1u32 << 20) - 1);
 
+const CAPABILITIES: phy::Capabilities = phy::Capabilities::CH_5
+    .union(phy::Capabilities::CH_9)
+    .union(phy::Capabilities::PSR_32)
+    .union(phy::Capabilities::PSR_64)
+    .union(phy::Capabilities::PSR_128)
+    .union(phy::Capabilities::PSR_256)
+    .union(phy::Capabilities::PSR_512)
+    .union(phy::Capabilities::PSR_1024)
+    .union(phy::Capabilities::PSR_1536)
+    .union(phy::Capabilities::PSR_2048)
+    .union(phy::Capabilities::PSR_4096);
+
 // minimum microsecond duration in host system relative to DW3000 clock
 const HOST_MICROSECOND_MIN: Duration = {
     const CLOCK_TOL: f32 = 0.05; // STM32 HSI16 are typically below 2%
@@ -922,6 +934,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         self.state.into()
     }
 
+    fn capabilities(&self) -> phy::Capabilities {
+        CAPABILITIES
+    }
+
     fn channel(&self) -> phy::Channel {
         self.channel.into()
     }
@@ -946,6 +962,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         run_config: phy::RunConfig,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         // TODO: Check for updates at https://gist.github.com/egnor/455d510e11c22deafdec14b09da5bf54
+
+        if !self.capabilities().has_psr(run_config.psr) {
+            return Err(OpError::UnsupportedPsr(run_config.psr).into());
+        }
 
         let [min_code, max_code] = self.dev_config.preamble_prf.code_range();
         if !(min_code <= run_config.preamble_code && run_config.preamble_code <= max_code) {
