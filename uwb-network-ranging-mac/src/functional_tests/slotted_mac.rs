@@ -1,6 +1,5 @@
 use crate::mac::format;
 use crate::phy;
-use crate::phy::BitRate;
 use crate::phy::time::Duration;
 use crate::psdu::{PsduContainer, StaticPsdu};
 use core::num::NonZero;
@@ -20,7 +19,6 @@ const RX_CONFIG: phy::RxConfig = phy::RxConfig {
 };
 
 const TX_CONFIG: phy::TxConfig = phy::TxConfig {
-    bit_rate: BitRate::Kbs850,
     ranging_flag: false,
 };
 

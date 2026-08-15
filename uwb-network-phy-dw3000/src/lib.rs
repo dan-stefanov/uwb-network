@@ -48,7 +48,10 @@ const CAPABILITIES: phy::Capabilities = phy::Capabilities::CH_5
     .union(phy::Capabilities::PSR_2048)
     .union(phy::Capabilities::PSR_4096)
     .union(phy::Capabilities::SFD_0)
-    .union(phy::Capabilities::SFD_2);
+    .union(phy::Capabilities::SFD_2)
+    .union(phy::Capabilities::BIT_RATE_850)
+    .union(phy::Capabilities::BIT_RATE_6810)
+    .union(phy::Capabilities::BIT_RATE_6810_ONLY);
 
 // minimum microsecond duration in host system relative to DW3000 clock
 const HOST_MICROSECOND_MIN: Duration = {
@@ -735,6 +738,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
     fn set_tx_config(
         &mut self,
         config: phy::TxConfig,
+        bit_rate: phy::BitRate,
         psr: phy::Psr,
         length: u16,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
@@ -747,9 +751,10 @@ impl<IF: Interface> Dw3000Phy<IF> {
         // Check errata for correct procedure.
         ral.tx_fctrl_short().write(|w| {
             w.set_txflen(length);
-            w.set_txbr(match config.bit_rate {
+            w.set_txbr(match bit_rate {
                 phy::BitRate::Kbs850 => regs::BitRate::Kbs850,
-                phy::BitRate::Kbs6810 => regs::BitRate::Kbs6810,
+                phy::BitRate::Kbs6810 | phy::BitRate::Kbs6810Only => regs::BitRate::Kbs6810,
+                _ => unreachable!("unsupported bit_rate value {:?}", bit_rate),
             });
             w.set_tr(config.ranging_flag);
             w.set_txpsr(match psr {
@@ -925,6 +930,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(OpError::UnsupportedSfd(run_config.sfd_type).into());
         }
 
+        if !self.capabilities().has_bit_rate(run_config.bit_rate) {
+            return Err(OpError::UnsupportedBitRate(run_config.bit_rate).into());
+        }
+
         let channel_config = ChannelConfig {
             channel,
             sfd_type: run_config.sfd_type,
@@ -961,7 +970,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
                 phy::PhrFormat::Standard => regs::PhrMode::StandardFrame,
                 phy::PhrFormat::Long => regs::PhrMode::LongFrame,
             });
-            w.set_phr_6m8(run_config.high_phr_bit_rate);
+            w.set_phr_6m8(run_config.bit_rate == phy::BitRate::Kbs6810Only);
             w.set_cia_ipatov(true);
             w.set_cia_sts(false);
             w.set_rxwtoe(true); // Receive Wait Timeout Enable
@@ -1062,7 +1071,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             phy::shr_duration(run_data.preamble_prf, run_config.sfd_type, run_config.psr);
         let rmarker_at = start_at + shr_duration;
 
-        self.set_tx_config(tx_config, run_config.psr, length)?;
+        self.set_tx_config(tx_config, run_config.bit_rate, run_config.psr, length)?;
         self.set_dx_time(rmarker_at)?;
 
         self.interface.send_command(FastCommand::Dtx)?;
@@ -1083,19 +1092,13 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(OpError::StartInstantPassed(overtime).into());
         }
 
-        let phr_bit_rate = if run_config.high_phr_bit_rate {
-            tx_config.bit_rate
-        } else {
-            phy::BitRate::Kbs850
-        };
-
         const _START_DELAY_MAX: Duration = Instant::PERIOD;
         let start_delay = start_at - start_instant;
 
         const _FRAME_DURATION_MAX: Duration = Instant::PERIOD; // significant exaggeration
         let frame_duration = shr_duration
-            + phy::phr_duration(phr_bit_rate)
-            + phy::psdu_duration(tx_config.bit_rate, length);
+            + phy::phr_duration(run_config.bit_rate)
+            + phy::psdu_duration(run_config.bit_rate, length);
 
         const _EVENT_TIMEOUT_US_MAX: u64 = _START_DELAY_MAX
             .add(_FRAME_DURATION_MAX)

@@ -186,8 +186,16 @@ impl SfdType {
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BitRate {
+    /// 0.11 MBit/s for PHR and payload
+    Kbs110,
+    /// 0.85 MBit/s for PHR and payload
     Kbs850,
+    /// 0.85 MBit/s for PHR, 6.81 MBit/s for payload, a.k.a. DRBM_LP
     Kbs6810,
+    /// 6.81 MBit/s for PHR and payload, a.k.a. DRBM_HP
+    Kbs6810Only,
+    /// 0.85 MBit/s for PHR, 27.24 MBit/s for payload
+    Kbs27240,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -248,6 +256,12 @@ bitflags! {
         const SFD_2 = 1 << 31;
         const SFD_3 = 1 << 32;
         const SFD_4 = 1 << 33;
+
+        const BIT_RATE_110 = 1 << 34;
+        const BIT_RATE_850 = 1 << 35;
+        const BIT_RATE_6810 = 1 << 36;
+        const BIT_RATE_6810_ONLY = 1 << 37;
+        const BIT_RATE_27240 = 1 << 38;
     }
 }
 
@@ -266,6 +280,10 @@ impl Capabilities {
 
     pub fn has_sfd(self, sfd_type: SfdType) -> bool {
         self.contains(Self::from_sfd(sfd_type))
+    }
+
+    pub fn has_bit_rate(self, bit_rate: BitRate) -> bool {
+        self.contains(Self::from_bit_rate(bit_rate))
     }
 
     const fn from_channel(channel: Channel) -> Self {
@@ -304,6 +322,16 @@ impl Capabilities {
             SfdType::Sfd4 => Self::SFD_4,
         }
     }
+
+    const fn from_bit_rate(bit_rate: BitRate) -> Self {
+        match bit_rate {
+            BitRate::Kbs110 => Self::BIT_RATE_110,
+            BitRate::Kbs850 => Self::BIT_RATE_850,
+            BitRate::Kbs6810 => Self::BIT_RATE_6810,
+            BitRate::Kbs6810Only => Self::BIT_RATE_6810_ONLY,
+            BitRate::Kbs27240 => Self::BIT_RATE_27240,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -323,11 +351,8 @@ pub struct RunConfig {
     pub preamble_code: PreambleCode,
     pub psr: Psr,
     pub sfd_type: SfdType,
+    pub bit_rate: BitRate,
     pub phr_format: PhrFormat,
-    /// Match PHR bit rate to the PSDU bit rate
-    ///
-    /// When cleared, use BitRate::Kbs6810 for any PSDU bit rate
-    pub high_phr_bit_rate: bool,
     /// Replace last FCS_LENGTH octets with calculated FCS
     pub correct_tx_fcs: bool,
 }
@@ -339,8 +364,8 @@ impl RunConfig {
             preamble_code,
             psr: Psr::Symbols64,
             sfd_type: SfdType::Sfd0,
+            bit_rate: BitRate::Kbs850,
             phr_format: PhrFormat::Standard,
-            high_phr_bit_rate: false,
             correct_tx_fcs: false,
         }
     }
@@ -349,14 +374,12 @@ impl RunConfig {
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TxConfig {
-    pub bit_rate: BitRate,
     pub ranging_flag: bool,
 }
 
 impl Default for TxConfig {
     fn default() -> Self {
         Self {
-            bit_rate: BitRate::Kbs850,
             ranging_flag: false,
         }
     }
@@ -397,6 +420,7 @@ pub enum OpError {
     UnsupportedPrf(MeanPrf),
     UnsupportedPsr(Psr),
     UnsupportedSfd(SfdType),
+    UnsupportedBitRate(BitRate),
     ExcessiveRxTimeout(time::Duration),
     StartInstantPassed(time::Duration),
     BufferAccessBeyondPhrFormat(usize, PhrFormat),
@@ -486,11 +510,22 @@ pub const fn preamble_symbol_duration(prf: MeanPrf) -> time::Duration {
     }
 }
 
-pub const fn psdu_symbol_duration(bit_rate: BitRate) -> time::Duration {
+pub const fn phr_bit_duration(bit_rate: BitRate) -> time::Duration {
     // See IEEE802.15.4-2020 table 15.3
     match bit_rate {
+        BitRate::Kbs110 => time::Duration::CHIP.mul_u32(4096),
+        BitRate::Kbs850 | BitRate::Kbs6810 | BitRate::Kbs27240 => time::Duration::CHIP.mul_u32(512),
+        BitRate::Kbs6810Only => time::Duration::CHIP.mul_u32(64),
+    }
+}
+
+pub const fn psdu_bit_duration(bit_rate: BitRate) -> time::Duration {
+    // See IEEE802.15.4-2020 table 15.3
+    match bit_rate {
+        BitRate::Kbs110 => time::Duration::CHIP.mul_u32(4096),
         BitRate::Kbs850 => time::Duration::CHIP.mul_u32(512),
-        BitRate::Kbs6810 => time::Duration::CHIP.mul_u32(64),
+        BitRate::Kbs6810 | BitRate::Kbs6810Only => time::Duration::CHIP.mul_u32(64),
+        BitRate::Kbs27240 => time::Duration::CHIP.mul_u32(16),
     }
 }
 
@@ -503,7 +538,7 @@ pub const fn shr_duration(prf: MeanPrf, sfd_type: SfdType, psr: Psr) -> time::Du
 
 pub const fn phr_duration(bit_rate: BitRate) -> time::Duration {
     const PHR_BITS: u32 = 18;
-    psdu_symbol_duration(bit_rate).mul_u32(PHR_BITS)
+    phr_bit_duration(bit_rate).mul_u32(PHR_BITS)
 }
 
 pub const fn psdu_duration(bit_rate: BitRate, length: u16) -> time::Duration {
@@ -512,5 +547,5 @@ pub const fn psdu_duration(bit_rate: BitRate, length: u16) -> time::Duration {
     let in_bit_length = length as u32 * 8;
     let block_count = in_bit_length.div_ceil(RS_IN_BLOCK_SIZE);
     let out_bit_length = in_bit_length + block_count * RS_PARITY_SIZE;
-    psdu_symbol_duration(bit_rate).mul_u32(out_bit_length)
+    psdu_bit_duration(bit_rate).mul_u32(out_bit_length)
 }
