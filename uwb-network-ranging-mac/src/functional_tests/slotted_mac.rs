@@ -11,6 +11,7 @@ const SLOT_DURATION: Duration = Duration::RSTU.mul_u32(10000);
 const TURNAROUND_DURATION: Duration = Duration::RSTU.mul_u32(1000);
 
 const SLOT_COUNT: u8 = 5;
+const PREAMBLE_CODE: phy::PreambleCode = phy::PreambleCode::new(9).unwrap();
 
 const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
 
@@ -34,19 +35,14 @@ where
 
     info!("Configure");
 
-    let [min_code, _] = phy::ieee_allocated_code_range(channel, phy.preamble_prf());
-    let run_config = phy::RunConfig {
-        channel,
-        preamble_code: min_code,
-        psr: phy::Psr::Symbols64,
-        correct_tx_fcs: true,
-        ..Default::default()
-    };
+    let mut run_config = phy::RunConfig::new(channel, PREAMBLE_CODE);
+    run_config.psr = phy::Psr::Symbols64;
+    run_config.correct_tx_fcs = true;
 
     phy.start(run_config).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
 
-    let shr_duration = phy::shr_duration(phy.preamble_prf(), phy.sfd_length(), run_config.psr);
+    let shr_duration = phy::shr_duration(phy::MeanPrf::Mhz62, phy.sfd_length(), run_config.psr);
 
     let mut beacon_psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
     {
@@ -140,19 +136,14 @@ where
     info!("Run as responder");
 
     info!("Configure");
-    let [min_code, _] = phy::ieee_allocated_code_range(channel, phy.preamble_prf());
-    let run_config = phy::RunConfig {
-        channel,
-        preamble_code: min_code,
-        psr: phy::Psr::Symbols64,
-        correct_tx_fcs: true,
-        ..Default::default()
-    };
+    let mut run_config = phy::RunConfig::new(channel, PREAMBLE_CODE);
+    run_config.psr = phy::Psr::Symbols64;
+    run_config.correct_tx_fcs = true;
 
     phy.start(run_config).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
 
-    let shr_duration = phy::shr_duration(phy.preamble_prf(), phy.sfd_length(), run_config.psr);
+    let shr_duration = phy::shr_duration(phy::MeanPrf::Mhz62, phy.sfd_length(), run_config.psr);
 
     loop {
         let mut psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();

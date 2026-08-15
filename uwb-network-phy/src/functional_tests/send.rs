@@ -6,6 +6,7 @@ use heapless::Vec;
 const TX_DELAY: Duration = Duration::RSTU.mul_u32(1000);
 const RX_DELAY: Duration = Duration::RSTU.mul_u32(1000);
 const RX_TIMEOUT: Duration = Duration::RSTU.mul_u32(1_000_000);
+const PREAMBLE_CODE: phy::PreambleCode = phy::PreambleCode::new(9).unwrap();
 
 const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
 
@@ -18,13 +19,8 @@ where
 {
     info!("Run as initiator");
 
-    let [min_code, _] = phy::ieee_allocated_code_range(channel, phy.preamble_prf());
-    let run_config = phy::RunConfig {
-        channel,
-        preamble_code: min_code,
-        correct_tx_fcs: true,
-        ..Default::default()
-    };
+    let mut run_config = phy::RunConfig::new(channel, PREAMBLE_CODE);
+    run_config.correct_tx_fcs = true;
 
     info!("Configure");
     phy.start(run_config).await.unwrap();
@@ -64,12 +60,7 @@ where
 
     info!("Configure");
 
-    let [min_code, _] = phy::ieee_allocated_code_range(channel, phy.preamble_prf());
-    let run_config = phy::RunConfig {
-        channel,
-        preamble_code: min_code,
-        ..Default::default()
-    };
+    let run_config = phy::RunConfig::new(channel, PREAMBLE_CODE);
 
     phy.start(run_config).await.unwrap();
 

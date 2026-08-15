@@ -36,6 +36,8 @@ const MAX_RX_FRAME_TIMEOUT: Duration = RX_FRAME_TIMEOUT_UNIT.mul_u32((1u32 << 20
 
 const CAPABILITIES: phy::Capabilities = phy::Capabilities::CH_5
     .union(phy::Capabilities::CH_9)
+    .union(phy::Capabilities::PRF_16)
+    .union(phy::Capabilities::PRF_62)
     .union(phy::Capabilities::PSR_32)
     .union(phy::Capabilities::PSR_64)
     .union(phy::Capabilities::PSR_128)
@@ -277,8 +279,8 @@ struct RfConfig {
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct ChannelConfig {
     pub channel: DevChannel,
-    pub rx_code: u8,
-    pub tx_code: u8,
+    pub rx_code: phy::PreambleCode,
+    pub tx_code: phy::PreambleCode,
 }
 
 struct OtpData {
@@ -416,6 +418,7 @@ async fn check_dev_id<IF: Interface>(
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct RunData {
     config: phy::RunConfig,
+    preamble_prf: phy::MeanPrf,
     pac: PreambleAcquisitionChunk,
 }
 
@@ -491,7 +494,6 @@ impl TxPowerConfig {
 
 #[non_exhaustive]
 pub struct DeviceConfig {
-    pub preamble_prf: phy::MeanPrf,
     pub sfd_type: SfdType,
     pub tx_power: TxPowerConfig,
 }
@@ -499,7 +501,6 @@ pub struct DeviceConfig {
 impl Default for DeviceConfig {
     fn default() -> Self {
         Self {
-            preamble_prf: phy::MeanPrf::Mhz62,
             sfd_type: SfdType::IeeeSfd0,
             tx_power: TxPowerConfig::default(),
         }
@@ -511,15 +512,6 @@ impl<IF: Interface> Dw3000Phy<IF> {
         interface: IF,
         dev_config: DeviceConfig,
     ) -> Result<Self, Error<IF::Error, DeviceError>> {
-        // TODO: Return an error code
-        assert!(
-            matches!(
-                dev_config.preamble_prf,
-                phy::MeanPrf::Mhz16 | phy::MeanPrf::Mhz62
-            ),
-            "Unsupported PRF {:?}",
-            dev_config.preamble_prf
-        );
         let mut interface = InterfaceWrapper(interface);
         reset_power_up(&mut interface).await?;
         check_dev_id(&mut interface).await?;
@@ -755,8 +747,8 @@ impl<IF: Interface> Dw3000Phy<IF> {
                 SfdType::Decawave16 => regs::SfdType::Decawave16,
                 SfdType::IeeeSfd2 => regs::SfdType::IeeeSfd2,
             });
-            w.set_tx_pcode(config.tx_code);
-            w.set_rx_pcode(config.rx_code);
+            w.set_tx_pcode(config.tx_code.as_number());
+            w.set_rx_pcode(config.rx_code.as_number());
         })?;
         Ok(())
     }
@@ -922,10 +914,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         CAPABILITIES
     }
 
-    fn preamble_prf(&self) -> phy::MeanPrf {
-        self.dev_config.preamble_prf
-    }
-
     fn sfd_length(&self) -> phy::SfdLength {
         self.dev_config.sfd_type.length()
     }
@@ -952,13 +940,9 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(OpError::UnsupportedPsr(run_config.psr).into());
         }
 
-        let [min_code, max_code] = self.dev_config.preamble_prf.code_range();
-        if !(min_code <= run_config.preamble_code && run_config.preamble_code <= max_code) {
-            return Err(OpError::IncompatiblePreambleCode(
-                run_config.preamble_code,
-                self.dev_config.preamble_prf,
-            )
-            .into());
+        let preamble_prf = run_config.preamble_code.prf();
+        if !self.capabilities().has_prf(preamble_prf) {
+            return Err(OpError::UnsupportedPrf(preamble_prf).into());
         }
 
         let channel_config = ChannelConfig {
@@ -970,7 +954,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         let pac = recommended_pac_length(run_config.psr);
         let base_config = RfConfig {
             channel,
-            prf: self.dev_config.preamble_prf,
+            prf: preamble_prf,
             psr: run_config.psr,
             pac,
         };
@@ -1008,6 +992,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
         self.state = InnerState::Running(RunData {
             config: run_config,
+            preamble_prf,
             pac,
         });
 
@@ -1092,11 +1077,8 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(Error::Operation(OpError::TxLengthLessThanFcs(length)));
         }
 
-        let shr_duration = phy::shr_duration(
-            self.dev_config.preamble_prf,
-            self.sfd_length(),
-            run_config.psr,
-        );
+        let shr_duration =
+            phy::shr_duration(run_data.preamble_prf, self.sfd_length(), run_config.psr);
         let rmarker_at = start_at + shr_duration;
 
         self.set_tx_config(tx_config, run_config.psr, length)?;
