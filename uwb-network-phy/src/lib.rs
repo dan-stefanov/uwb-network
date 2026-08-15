@@ -413,25 +413,6 @@ impl RunConfig {
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct RxConfig {
-    /// Preamble hunting duration in symbols
-    ///
-    /// Implementation should hunt for preamble at least for this duration.
-    /// Once timeout has expired, implementation may stop reception to
-    /// save power.
-    pub max_preamble_hunt: Option<NonZeroU16>,
-}
-
-impl Default for RxConfig {
-    fn default() -> Self {
-        Self {
-            max_preamble_hunt: None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RxReport<T> {
     pub length: u16,
     pub fcs_good: bool,
@@ -483,10 +464,9 @@ pub trait Phy {
     type IoError: core::fmt::Debug;
     type DevError: core::fmt::Debug;
 
-    const MAX_RX_FRAME_TIMEOUT: time::Duration;
-
     fn state(&self) -> State;
     fn capabilities(&self) -> Capabilities;
+    fn max_rx_timeout(&self) -> time::Duration;
     async fn stop(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>>;
     async fn start(
         &mut self,
@@ -507,17 +487,26 @@ pub trait Phy {
         psdu: &mut [u8],
     ) -> Result<(), Error<Self::IoError, Self::DevError>>;
 
-    // Frame length should include FCS field
+    /// Transmit a frame form buffer
+    ///
+    /// `psdu_length` should include FCS field
     async fn transmit(
         &mut self,
-        length: u16,
         start_at: Self::Instant,
+        psdu_length: u16,
     ) -> Result<(), Error<Self::IoError, Self::DevError>>;
 
+    /// Try to receive a frame
+    ///
+    /// `max_preamble_hunt` is the minimum preamble hunting duration in symbols. Once it
+    /// expires, the implementation may stop reception to save power.
+    /// `timeout` define the total time to the frame reception. Once timeout is expired,
+    /// implementation should return, event if a frame is being receiving.
+    /// The value should not exceed the value returned by [`Phy::max_rx_timeout`].
     async fn receive(
         &mut self,
-        config: RxConfig,
         start_at: Self::Instant,
+        max_preamble_hunt: Option<NonZeroU16>,
         timeout: time::Duration,
     ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>>;
 }

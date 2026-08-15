@@ -38,7 +38,7 @@ where
         info!("Sent a packet");
 
         let timestamp = phy.get_timestamp().await.unwrap();
-        phy.transmit(unwrap!(u16::try_from(psdu.len())), timestamp + TX_DELAY)
+        phy.transmit(timestamp + TX_DELAY, unwrap!(u16::try_from(psdu.len())))
             .await
             .unwrap();
         Timer::after_millis(500).await;
@@ -67,9 +67,7 @@ where
 
         let timestamp = phy.get_timestamp().await.unwrap();
 
-        let status = phy
-            .receive(phy::RxConfig::default(), timestamp + RX_DELAY, RX_TIMEOUT)
-            .await;
+        let status = phy.receive(timestamp + RX_DELAY, None, RX_TIMEOUT).await;
 
         match status {
             Ok(Some(report)) => {

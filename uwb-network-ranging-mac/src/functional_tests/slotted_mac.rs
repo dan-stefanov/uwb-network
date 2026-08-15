@@ -14,10 +14,6 @@ const PREAMBLE_CODE: phy::PreambleCode = phy::PreambleCode::new(9).unwrap();
 
 const MAX_PSDU_SIZE: usize = phy::MAX_PSDU_LENGTH as usize;
 
-const RX_CONFIG: phy::RxConfig = phy::RxConfig {
-    max_preamble_hunt: None,
-};
-
 pub async fn initiator<PHY>(phy: &mut PHY, channel: phy::Channel)
 where
     PHY: phy::Phy,
@@ -96,8 +92,8 @@ where
         let super_frame_start = now + TURNAROUND_DURATION;
 
         phy.transmit(
-            unwrap!(u16::try_from(beacon_psdu.len())),
             super_frame_start + shr_duration,
+            unwrap!(u16::try_from(beacon_psdu.len())),
         )
         .await
         .unwrap();
@@ -108,8 +104,8 @@ where
             phy.write_tx_buffer(slot_psdu.as_slice()).await.unwrap();
 
             phy.transmit(
-                unwrap!(u16::try_from(slot_psdu.len())),
                 super_frame_start + (i as u32) * SLOT_DURATION + shr_duration,
+                unwrap!(u16::try_from(slot_psdu.len())),
             )
             .await
             .unwrap();
@@ -143,12 +139,9 @@ where
         info!("Wait for a beacon");
         let now = phy.get_timestamp().await.unwrap();
 
+        let max_rx_timeout = phy.max_rx_timeout();
         let status = phy
-            .receive(
-                RX_CONFIG,
-                now + TURNAROUND_DURATION,
-                PHY::MAX_RX_FRAME_TIMEOUT,
-            )
+            .receive(now + TURNAROUND_DURATION, None, max_rx_timeout)
             .await
             .unwrap();
 
@@ -166,8 +159,8 @@ where
             for i in 1..SLOT_COUNT {
                 let status = phy
                     .receive(
-                        RX_CONFIG,
                         super_frame_start + (i as u32) * SLOT_DURATION,
+                        None,
                         SLOT_DURATION - TURNAROUND_DURATION,
                     )
                     .await

@@ -32,7 +32,7 @@ const RX_CALIBRATION_TIMEOUT_US: u32 = 60_000;
 const RX_CALIBRATION_POLL_PERIOD_US: u32 = 20_000;
 
 const RX_FRAME_TIMEOUT_UNIT: Duration = Duration::CHIP.mul_u32(512);
-const MAX_RX_FRAME_TIMEOUT: Duration = RX_FRAME_TIMEOUT_UNIT.mul_u32((1u32 << 20) - 1);
+const MAX_RX_TIMEOUT: Duration = RX_FRAME_TIMEOUT_UNIT.mul_u32((1u32 << 20) - 1);
 
 const CAPABILITIES: phy::Capabilities = phy::Capabilities::CH_5
     .union(phy::Capabilities::CH_9)
@@ -810,7 +810,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         &mut self,
         timeout: Duration,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
-        assert!(timeout <= MAX_RX_FRAME_TIMEOUT);
+        assert!(timeout <= MAX_RX_TIMEOUT);
         const UNIT: Duration = RX_FRAME_TIMEOUT_UNIT;
         let counter = timeout.as_ticks().div_ceil(UNIT.as_ticks());
         assert!(counter < 1u64 << 20);
@@ -898,14 +898,16 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
     type IoError = IF::Error;
     type DevError = DeviceError;
 
-    const MAX_RX_FRAME_TIMEOUT: Duration = MAX_RX_FRAME_TIMEOUT;
-
     fn state(&self) -> phy::State {
         self.state.into()
     }
 
     fn capabilities(&self) -> phy::Capabilities {
         CAPABILITIES
+    }
+
+    fn max_rx_timeout(&self) -> Duration {
+        MAX_RX_TIMEOUT
     }
 
     // TODO: go to sleep instead of shutdown
@@ -1042,8 +1044,8 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
     async fn transmit(
         &mut self,
-        length: u16,
         start_at: Instant,
+        length: u16,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         let InnerState::Running(run_data) = self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
@@ -1126,8 +1128,8 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
     async fn receive(
         &mut self,
-        rx_config: phy::RxConfig,
         start_at: Instant,
+        max_preamble_hunt: Option<NonZeroU16>,
         rx_timeout: Duration,
     ) -> Result<Option<phy::RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
         let InnerState::Running(run_data) = self.state else {
@@ -1136,11 +1138,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             )));
         };
 
-        if rx_timeout > MAX_RX_FRAME_TIMEOUT {
+        if rx_timeout > MAX_RX_TIMEOUT {
             return Err(Error::Operation(OpError::ExcessiveRxTimeout(rx_timeout)));
         }
 
-        self.set_preamble_timeout(run_data.pac, rx_config.max_preamble_hunt)?;
+        self.set_preamble_timeout(run_data.pac, max_preamble_hunt)?;
         self.set_dx_time(start_at)?;
         self.set_rx_frame_timeout(rx_timeout)?;
 
@@ -1161,7 +1163,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         let start_delay = start_at - start_instant;
 
         const _EVENT_TIMEOUT_US_MAX: u64 = _START_DELAY_MAX
-            .add(MAX_RX_FRAME_TIMEOUT)
+            .add(MAX_RX_TIMEOUT)
             .div_ceil(HOST_MICROSECOND_MIN);
         let event_timeout_us = (start_delay + rx_timeout).div_ceil(HOST_MICROSECOND_MIN);
 
