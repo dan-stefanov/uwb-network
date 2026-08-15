@@ -344,6 +344,7 @@ pub struct RunConfig {
     pub sfd_type: SfdType,
     pub bit_rate: BitRate,
     pub long_frame_format: bool,
+    pub ranging: bool,
     /// Replace last FCS_LENGTH octets with calculated FCS
     pub correct_tx_fcs: bool,
 }
@@ -357,21 +358,8 @@ impl RunConfig {
             sfd_type: SfdType::Sfd0,
             bit_rate: BitRate::Kbs850,
             long_frame_format: false,
+            ranging: false,
             correct_tx_fcs: false,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct TxConfig {
-    pub ranging_flag: bool,
-}
-
-impl Default for TxConfig {
-    fn default() -> Self {
-        Self {
-            ranging_flag: false,
         }
     }
 }
@@ -480,7 +468,6 @@ pub trait Phy {
     // Frame length should include FCS field
     async fn transmit(
         &mut self,
-        config: TxConfig,
         length: u16,
         start_at: Self::Instant,
     ) -> Result<(), Error<Self::IoError, Self::DevError>>;

@@ -38,13 +38,9 @@ where
         info!("Sent a packet");
 
         let timestamp = phy.get_timestamp().await.unwrap();
-        phy.transmit(
-            phy::TxConfig::default(),
-            unwrap!(u16::try_from(psdu.len())),
-            timestamp + TX_DELAY,
-        )
-        .await
-        .unwrap();
+        phy.transmit(unwrap!(u16::try_from(psdu.len())), timestamp + TX_DELAY)
+            .await
+            .unwrap();
         Timer::after_millis(500).await;
     }
 }

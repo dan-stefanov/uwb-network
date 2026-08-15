@@ -746,9 +746,9 @@ impl<IF: Interface> Dw3000Phy<IF> {
 
     fn set_tx_config(
         &mut self,
-        config: phy::TxConfig,
-        bit_rate: phy::BitRate,
         psr: phy::Psr,
+        bit_rate: phy::BitRate,
+        ranging: bool,
         length: u16,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
         const MAX_FRAME_LENGTH: u16 = 1023;
@@ -765,7 +765,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
                 phy::BitRate::Kbs6810 | phy::BitRate::Kbs6810Only => regs::BitRate::Kbs6810,
                 _ => unreachable!("unsupported bit_rate value {:?}", bit_rate),
             });
-            w.set_tr(config.ranging_flag);
+            w.set_tr(ranging);
             w.set_txpsr(match psr {
                 phy::Psr::Symbols16 => regs::TxPsr::Symbols16,
                 phy::Psr::Symbols32 => regs::TxPsr::Symbols32,
@@ -883,7 +883,6 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(unwrap!(Instant::try_from_ticks(rx_time)))
     }
 
-    #[allow(dead_code)]
     fn get_coarse_rx_timestamp(&mut self) -> Result<Instant, Error<IF::Error, DeviceError>> {
         let mut ral = self.interface.ral();
         let sys_ticks_x2 = ral.rx_rawst().read_bytes()?;
@@ -985,11 +984,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
                 regs::PhrMode::StandardFrame
             });
             w.set_phr_6m8(run_config.bit_rate == phy::BitRate::Kbs6810Only);
-            w.set_cia_ipatov(true);
+            w.set_cia_ipatov(run_config.ranging);
             w.set_cia_sts(false);
             w.set_rxwtoe(true); // Receive Wait Timeout Enable
             w.set_cp_spc(regs::StsPocketPosition::NoSts);
-            w.set_fast_aat(false); // RXFR waits for CIADONE or 
+            w.set_fast_aat(false); // RXFR waits for CIADONE or CIAERR
         })?;
 
         self.interface.clear_all_events()?;
@@ -1061,7 +1060,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
     async fn transmit(
         &mut self,
-        tx_config: phy::TxConfig,
         length: u16,
         start_at: Instant,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
@@ -1088,7 +1086,12 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             phy::shr_duration(run_data.preamble_prf, run_config.sfd_type, run_config.psr);
         let rmarker_at = start_at + shr_duration;
 
-        self.set_tx_config(tx_config, run_config.bit_rate, run_config.psr, length)?;
+        self.set_tx_config(
+            run_config.psr,
+            run_config.bit_rate,
+            run_config.ranging,
+            length,
+        )?;
         self.set_dx_time(rmarker_at)?;
 
         self.interface.send_command(FastCommand::Dtx)?;
@@ -1194,12 +1197,20 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         self.interface.clear_all_events()?;
 
         // TODO: Add RX error signalling
-        if !events.contains(Events::RXFR | Events::CIADONE) {
+        if !events.contains(Events::RXFR) {
+            return Ok(None);
+        }
+
+        if run_data.config.ranging && !events.contains(Events::CIADONE) {
             return Ok(None);
         }
 
         let frame_length = self.get_rx_frame_length()?;
-        let timestamp = self.get_fine_rx_timestamp()?;
+        let timestamp = if run_data.config.ranging {
+            self.get_fine_rx_timestamp()?
+        } else {
+            self.get_coarse_rx_timestamp()?
+        };
 
         Ok(Some(phy::RxReport {
             length: frame_length,

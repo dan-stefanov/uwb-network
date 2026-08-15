@@ -18,10 +18,6 @@ const RX_CONFIG: phy::RxConfig = phy::RxConfig {
     max_preamble_hunt: None,
 };
 
-const TX_CONFIG: phy::TxConfig = phy::TxConfig {
-    ranging_flag: false,
-};
-
 pub async fn initiator<PHY>(phy: &mut PHY, channel: phy::Channel)
 where
     PHY: phy::Phy,
@@ -100,7 +96,6 @@ where
         let super_frame_start = now + TURNAROUND_DURATION;
 
         phy.transmit(
-            TX_CONFIG,
             unwrap!(u16::try_from(beacon_psdu.len())),
             super_frame_start + shr_duration,
         )
@@ -113,7 +108,6 @@ where
             phy.write_tx_buffer(slot_psdu.as_slice()).await.unwrap();
 
             phy.transmit(
-                TX_CONFIG,
                 unwrap!(u16::try_from(slot_psdu.len())),
                 super_frame_start + (i as u32) * SLOT_DURATION + shr_duration,
             )
