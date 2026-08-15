@@ -219,10 +219,10 @@ impl PreambleAcquisitionChunk {
 }
 
 // TODO: tune performance for Symbols32
-fn recommended_pac_length(preamble_length: phy::PreambleLength) -> PreambleAcquisitionChunk {
-    if preamble_length < phy::PreambleLength::Symbols64 {
+fn recommended_pac_length(psr: phy::Psr) -> PreambleAcquisitionChunk {
+    if psr < phy::Psr::Symbols64 {
         PreambleAcquisitionChunk::Symbols4
-    } else if preamble_length < phy::PreambleLength::Symbols128 {
+    } else if psr < phy::Psr::Symbols128 {
         PreambleAcquisitionChunk::Symbols8
     } else {
         PreambleAcquisitionChunk::Symbols16
@@ -268,7 +268,7 @@ struct RfConfig {
     pub channel: DevChannel,
     pub prf: phy::MeanPrf,
     pub pac: PreambleAcquisitionChunk,
-    pub preamble_length: phy::PreambleLength,
+    pub psr: phy::Psr,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -638,7 +638,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         ral.otp_cfg().write(|w| {
             w.set_ops_sel(
                 // Check DW3000 User Manual section 8.2.12.7 for details
-                if config.preamble_length >= phy::PreambleLength::Symbols256 {
+                if config.psr >= phy::Psr::Symbols256 {
                     regs::ReceiverParameterSet::Long
                 } else {
                     regs::ReceiverParameterSet::Short
@@ -768,7 +768,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
     fn set_tx_config(
         &mut self,
         config: phy::TxConfig,
-        preamble_length: phy::PreambleLength,
+        psr: phy::Psr,
         length: u16,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
         const MAX_FRAME_LENGTH: u16 = 1023;
@@ -785,17 +785,17 @@ impl<IF: Interface> Dw3000Phy<IF> {
                 phy::BitRate::Kbs6810 => regs::BitRate::Kbs6810,
             });
             w.set_tr(config.ranging_flag);
-            w.set_txpsr(match preamble_length {
-                phy::PreambleLength::Symbols16 => regs::TxPreambleLength::Symbols16,
-                phy::PreambleLength::Symbols32 => regs::TxPreambleLength::Symbols32,
-                phy::PreambleLength::Symbols64 => regs::TxPreambleLength::Symbols64,
-                phy::PreambleLength::Symbols128 => regs::TxPreambleLength::Symbols128,
-                phy::PreambleLength::Symbols256 => regs::TxPreambleLength::Symbols256,
-                phy::PreambleLength::Symbols512 => regs::TxPreambleLength::Symbols512,
-                phy::PreambleLength::Symbols1024 => regs::TxPreambleLength::Symbols1024,
-                phy::PreambleLength::Symbols1536 => regs::TxPreambleLength::Symbols1536,
-                phy::PreambleLength::Symbols2048 => regs::TxPreambleLength::Symbols2048,
-                phy::PreambleLength::Symbols4096 => regs::TxPreambleLength::Symbols4096,
+            w.set_txpsr(match psr {
+                phy::Psr::Symbols16 => regs::TxPsr::Symbols16,
+                phy::Psr::Symbols32 => regs::TxPsr::Symbols32,
+                phy::Psr::Symbols64 => regs::TxPsr::Symbols64,
+                phy::Psr::Symbols128 => regs::TxPsr::Symbols128,
+                phy::Psr::Symbols256 => regs::TxPsr::Symbols256,
+                phy::Psr::Symbols512 => regs::TxPsr::Symbols512,
+                phy::Psr::Symbols1024 => regs::TxPsr::Symbols1024,
+                phy::Psr::Symbols1536 => regs::TxPsr::Symbols1536,
+                phy::Psr::Symbols2048 => regs::TxPsr::Symbols2048,
+                phy::Psr::Symbols4096 => regs::TxPsr::Symbols4096,
             });
         })?;
 
@@ -841,14 +841,14 @@ impl<IF: Interface> Dw3000Phy<IF> {
     fn set_sfd_timeout(
         &mut self,
         pac: PreambleAcquisitionChunk,
-        max_preamble_length: phy::PreambleLength,
+        max_psr: phy::Psr,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
         // UserManual discourage disabling timeout
         // DW3000 UM, 8.2.7.2
-        let max_preamble_length = max_preamble_length.as_symbols();
+        let max_psr = max_psr.as_symbols();
         let sfd_length = u16::from(u8::from(self.dev_config.sfd_type.length()));
         let pac_size = pac.as_symbols();
-        let symbols = max_preamble_length.max(pac_size) - pac_size + sfd_length + 1;
+        let symbols = max_psr.max(pac_size) - pac_size + sfd_length + 1;
 
         let mut ral = self.interface.ral();
         assert_ne!(symbols, 0);
@@ -962,11 +962,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             tx_code: run_config.preamble_code,
         };
 
-        let pac = recommended_pac_length(run_config.preamble_length);
+        let pac = recommended_pac_length(run_config.psr);
         let base_config = RfConfig {
             channel: self.channel,
             prf: self.dev_config.preamble_prf,
-            preamble_length: run_config.preamble_length,
+            psr: run_config.psr,
             pac,
         };
 
@@ -982,7 +982,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         self.start_pll(base_config.channel).await?;
         self.configure_rf(base_config)?;
         self.calibrate_rx().await?;
-        self.set_sfd_timeout(pac, run_config.preamble_length)?;
+        self.set_sfd_timeout(pac, run_config.psr)?;
 
         let mut ral = self.interface.ral();
         ral.sys_cfg().write(|w| {
@@ -1090,11 +1090,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         let shr_duration = phy::shr_duration(
             self.dev_config.preamble_prf,
             self.sfd_length(),
-            run_config.preamble_length,
+            run_config.psr,
         );
         let rmarker_at = start_at + shr_duration;
 
-        self.set_tx_config(tx_config, run_config.preamble_length, length)?;
+        self.set_tx_config(tx_config, run_config.psr, length)?;
         self.set_dx_time(rmarker_at)?;
 
         self.interface.send_command(FastCommand::Dtx)?;

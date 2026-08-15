@@ -84,7 +84,7 @@ pub enum BitRate {
 
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub enum TxPreambleLength {
+pub enum TxPsr {
     Symbols16 = 0b0000, // undocumented
     Symbols64 = 0b0001,
     Symbols1024 = 0b0010,
@@ -105,7 +105,7 @@ pub enum TxPreambleLength {
 
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub enum RxPreambleLength {
+pub enum RxPsr {
     Symbols16 = 0b00,
     Symbols64 = 0b01,
     Symbols1024 = 0b10,
@@ -409,7 +409,7 @@ field_bool!(FfCfg, 15, lsadrape, "Long source address data request ACK with PEND
 field_prim!(TxFctrl, 0, 10, txflen, u16, "Transmit frame length");
 field_enum!(TxFctrl, 10, 11, txbr, u8, BitRate, "Transmit bit rate");
 field_bool!(TxFctrl, 11, tr, "Transmit ranging enable");
-field_enum!(TxFctrl, 12, 16, txpsr, u8, TxPreambleLength, "Transmit preamble symbol repetition (PSR)");
+field_enum!(TxFctrl, 12, 16, txpsr, u8, TxPsr, "Transmit preamble symbol repetition (PSR)");
 field_prim!(TxFctrl, 16, 26, txb_offset, u16, "Transmit buffer index offset");
 // bits 26-39 - reserved
 field_prim!(TxFctrl, 40, 48, fine_plen, u16, "Fine PSR control");
@@ -417,7 +417,7 @@ field_prim!(TxFctrl, 40, 48, fine_plen, u16, "Fine PSR control");
 field_prim!(TxFctrlShort, 0, 10, txflen, u16, "Transmit frame length");
 field_enum!(TxFctrlShort, 10, 11, txbr, u8, BitRate, "Transmit bit rate");
 field_bool!(TxFctrlShort, 11, tr, "Transmit ranging enable");
-field_enum!(TxFctrlShort, 12, 16, txpsr, u8, TxPreambleLength, "Transmit preamble symbol repetition (PSR)");
+field_enum!(TxFctrlShort, 12, 16, txpsr, u8, TxPsr, "Transmit preamble symbol repetition (PSR)");
 
 field_prim!(TxPower, 0, 8, data_pwr, u8, "Data transmit power");
 field_prim!(TxPower, 8, 16, phr_pwr, u8, "PHY header transmit power");
@@ -433,7 +433,7 @@ field_enum!(RxFinfo, 13, 14, rxbr, u8, BitRate, "Receive bit rate");
 // bit 14 - reserved
 field_bool!(RxFinfo, 15, rng, "Ranging flag in PHR");
 field_enum!(RxFinfo, 16, 18, rxpfr, u8, RxPfr, "Receive PFR");
-field_enum!(RxFinfo, 18, 20, rxpsr, u8, RxPreambleLength, "Receive preamble length from PHR");
+field_enum!(RxFinfo, 18, 20, rxpsr, u8, RxPsr, "Receive preamble length from PHR");
 field_prim!(RxFinfo, 20, 32, rxpacc, u16, "Preamble accumulation count");
 
 field_prim!(RxFinfoShort, 0, 10, rxflen, u16, "Receive frame length");
@@ -576,7 +576,7 @@ field_enum!(DbRxFinfo, 13, 14, rxbr, u8, BitRate, "Receive bit rate");
 // bit 14 - reserved
 field_bool!(DbRxFinfo, 15, rng, "Ranging flag in PHR");
 field_enum!(DbRxFinfo, 16, 18, rxpfr, u8, RxPfr, "Receive PFR");
-field_enum!(DbRxFinfo, 18, 19, rxpsr, u8, RxPreambleLength, "Receive preamble length from PHR");
+field_enum!(DbRxFinfo, 18, 19, rxpsr, u8, RxPsr, "Receive preamble length from PHR");
 field_prim!(DbRxFinfo, 20, 32, rxpacc, u16, "Preamble accumulation count");
 
 field_prim!(PtrAddrA, 0, 5, ptra_base, u8, "Indirect pointer A register ID");

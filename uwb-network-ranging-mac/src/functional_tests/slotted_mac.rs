@@ -1,7 +1,7 @@
 use crate::mac::format;
 use crate::phy;
+use crate::phy::BitRate;
 use crate::phy::time::Duration;
-use crate::phy::{BitRate, PreambleLength};
 use crate::psdu::{PsduContainer, StaticPsdu};
 use core::num::NonZero;
 use embassy_time::Timer;
@@ -37,7 +37,7 @@ where
     let [min_code, _] = phy::ieee_allocated_code_range(phy.channel(), phy.preamble_prf());
     let run_config = phy::RunConfig {
         preamble_code: min_code,
-        preamble_length: PreambleLength::Symbols64,
+        psr: phy::Psr::Symbols64,
         correct_tx_fcs: true,
         ..Default::default()
     };
@@ -45,11 +45,7 @@ where
     phy.start(run_config).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
 
-    let shr_duration = phy::shr_duration(
-        phy.preamble_prf(),
-        phy.sfd_length(),
-        run_config.preamble_length,
-    );
+    let shr_duration = phy::shr_duration(phy.preamble_prf(), phy.sfd_length(), run_config.psr);
 
     let mut beacon_psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
     {
@@ -146,7 +142,7 @@ where
     let [min_code, _] = phy::ieee_allocated_code_range(phy.channel(), phy.preamble_prf());
     let run_config = phy::RunConfig {
         preamble_code: min_code,
-        preamble_length: PreambleLength::Symbols64,
+        psr: phy::Psr::Symbols64,
         correct_tx_fcs: true,
         ..Default::default()
     };
@@ -154,11 +150,7 @@ where
     phy.start(run_config).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
 
-    let shr_duration = phy::shr_duration(
-        phy.preamble_prf(),
-        phy.sfd_length(),
-        run_config.preamble_length,
-    );
+    let shr_duration = phy::shr_duration(phy.preamble_prf(), phy.sfd_length(), run_config.psr);
 
     loop {
         let mut psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();

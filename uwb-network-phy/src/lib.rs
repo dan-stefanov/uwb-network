@@ -95,9 +95,10 @@ pub const fn ieee_allocated_code_range(chan: Channel, prf: MeanPrf) -> [u8; 2] {
     }
 }
 
+/// Preamble symbol repetitions
 #[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum PreambleLength {
+pub enum Psr {
     /// IEEE 802.15.4 standard length
     Symbols16,
     /// Non-standard length
@@ -120,19 +121,19 @@ pub enum PreambleLength {
     Symbols4096,
 }
 
-impl PreambleLength {
+impl Psr {
     pub const fn as_symbols(self) -> u16 {
         match self {
-            PreambleLength::Symbols16 => 16,
-            PreambleLength::Symbols32 => 32,
-            PreambleLength::Symbols64 => 64,
-            PreambleLength::Symbols128 => 128,
-            PreambleLength::Symbols256 => 256,
-            PreambleLength::Symbols512 => 512,
-            PreambleLength::Symbols1024 => 1024,
-            PreambleLength::Symbols1536 => 1536,
-            PreambleLength::Symbols2048 => 2048,
-            PreambleLength::Symbols4096 => 4096,
+            Psr::Symbols16 => 16,
+            Psr::Symbols32 => 32,
+            Psr::Symbols64 => 64,
+            Psr::Symbols128 => 128,
+            Psr::Symbols256 => 256,
+            Psr::Symbols512 => 512,
+            Psr::Symbols1024 => 1024,
+            Psr::Symbols1536 => 1536,
+            Psr::Symbols2048 => 2048,
+            Psr::Symbols4096 => 4096,
         }
     }
 }
@@ -193,7 +194,7 @@ pub enum State {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RunConfig {
     pub preamble_code: u8,
-    pub preamble_length: PreambleLength,
+    pub psr: Psr,
     pub phr_format: PhrFormat,
     /// Match PHR bit rate to the PSDU bit rate
     ///
@@ -209,7 +210,7 @@ impl Default for RunConfig {
     fn default() -> Self {
         Self {
             preamble_code: 0,
-            preamble_length: PreambleLength::Symbols64,
+            psr: Psr::Symbols64,
             phr_format: PhrFormat::Standard,
             high_phr_bit_rate: false,
             correct_tx_fcs: false,
@@ -365,13 +366,9 @@ pub const fn psdu_symbol_duration(bit_rate: BitRate) -> time::Duration {
     }
 }
 
-pub const fn shr_duration(
-    prf: MeanPrf,
-    sfd_length: SfdLength,
-    preamble_length: PreambleLength,
-) -> time::Duration {
+pub const fn shr_duration(prf: MeanPrf, sfd_length: SfdLength, psr: Psr) -> time::Duration {
     let preamble_symbol_duration = preamble_symbol_duration(prf);
-    let sync_length = preamble_length.as_symbols();
+    let sync_length = psr.as_symbols();
     let shr_length = sync_length + sfd_length as u8 as u16;
     preamble_symbol_duration.mul_u32(shr_length as u32)
 }
