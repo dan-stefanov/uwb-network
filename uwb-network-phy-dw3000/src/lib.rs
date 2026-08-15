@@ -273,8 +273,8 @@ struct RfConfig {
 struct ChannelConfig {
     pub channel: DevChannel,
     pub sfd_type: phy::SfdType,
-    pub rx_code: phy::PreambleCode,
-    pub tx_code: phy::PreambleCode,
+    pub rx_code: u8,
+    pub tx_code: u8,
 }
 
 struct OtpData {
@@ -739,8 +739,8 @@ impl<IF: Interface> Dw3000Phy<IF> {
                     core::unreachable!()
                 }
             });
-            w.set_tx_pcode(config.tx_code.as_number());
-            w.set_rx_pcode(config.rx_code.as_number());
+            w.set_tx_pcode(config.tx_code);
+            w.set_rx_pcode(config.rx_code);
         })?;
         Ok(())
     }

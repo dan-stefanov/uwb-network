@@ -67,6 +67,8 @@ impl Channel {
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MeanPrf {
+    /// 31-symbols preambles, CHIP_FREQ / 64
+    Mhz4,
     /// 31-symbols preambles, CHIP_FREQ / 16
     Mhz16,
     /// 127-symbols preambles, CHIP_FREQ / 4
@@ -75,38 +77,22 @@ pub enum MeanPrf {
     Mhz111,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct PreambleCode(u8);
-
-impl PreambleCode {
-    pub const fn new(value: u8) -> Option<Self> {
-        match value {
-            1..=32 => Some(Self(value)),
-            _ => None,
-        }
-    }
-
-    pub const fn as_number(self) -> u8 {
-        self.0
-    }
-
-    pub const fn prf(self) -> MeanPrf {
-        match self.0 {
-            1..=8 => MeanPrf::Mhz16,
-            9..=24 => MeanPrf::Mhz62,
-            25..=32 => MeanPrf::Mhz111,
-            _ => core::unreachable!(),
+impl MeanPrf {
+    pub const fn code_range(self) -> [u8; 2] {
+        match self {
+            MeanPrf::Mhz4 | MeanPrf::Mhz16 => [1, 8],
+            MeanPrf::Mhz62 => [9, 24],
+            MeanPrf::Mhz111 => [25, 32],
         }
     }
 }
 
 pub const fn ieee_allocated_code_range(chan: Channel, prf: MeanPrf) -> [u8; 2] {
     match (prf, chan.as_number()) {
-        (MeanPrf::Mhz16, 0 | 1 | 8 | 12) => [1, 2],
-        (MeanPrf::Mhz16, 2 | 5 | 9 | 13) => [3, 4],
-        (MeanPrf::Mhz16, 3 | 6 | 10 | 14) => [5, 6],
-        (MeanPrf::Mhz16, 4 | 7 | 11 | 15) => [7, 8],
+        (MeanPrf::Mhz4 | MeanPrf::Mhz16, 0 | 1 | 8 | 12) => [1, 2],
+        (MeanPrf::Mhz4 | MeanPrf::Mhz16, 2 | 5 | 9 | 13) => [3, 4],
+        (MeanPrf::Mhz4 | MeanPrf::Mhz16, 3 | 6 | 10 | 14) => [5, 6],
+        (MeanPrf::Mhz4 | MeanPrf::Mhz16, 4 | 7 | 11 | 15) => [7, 8],
         (MeanPrf::Mhz62, 0..=3 | 5 | 6 | 8..=10 | 12..=14) => [9, 12],
         (MeanPrf::Mhz62, 4 | 7 | 11 | 15) => [17, 20],
         (MeanPrf::Mhz111, 0..=15) => [25, 32],
@@ -221,35 +207,36 @@ bitflags! {
         const CH_14 = 1 << Channel::CH_14.as_number();
         const CH_15 = 1 << Channel::CH_15.as_number();
 
-        const PRF_16 = 1 << 16;
-        const PRF_62 = 1 << 17;
-        const PRF_111 = 1 << 18;
+        const PRF_4 = 1 << 16;
+        const PRF_16 = 1 << 17;
+        const PRF_62 = 1 << 18;
+        const PRF_111 = 1 << 19;
 
-        const PSR_16 = 1 << 19;
-        const PSR_32 = 1 << 20;
-        const PSR_64 = 1 << 21;
-        const PSR_128 = 1 << 22;
-        const PSR_256 = 1 << 23;
-        const PSR_512 = 1 << 24;
-        const PSR_1024 = 1 << 25;
-        const PSR_1536 = 1 << 26;
-        const PSR_2048 = 1 << 27;
-        const PSR_4096 = 1 << 28;
+        const PSR_16 = 1 << 20;
+        const PSR_32 = 1 << 21;
+        const PSR_64 = 1 << 22;
+        const PSR_128 = 1 << 23;
+        const PSR_256 = 1 << 24;
+        const PSR_512 = 1 << 25;
+        const PSR_1024 = 1 << 26;
+        const PSR_1536 = 1 << 27;
+        const PSR_2048 = 1 << 28;
+        const PSR_4096 = 1 << 29;
 
-        const SFD_0 = 1 << 29;
-        const SFD_1 = 1 << 30;
-        const SFD_2 = 1 << 31;
-        const SFD_3 = 1 << 32;
-        const SFD_4 = 1 << 33;
+        const SFD_0 = 1 << 30;
+        const SFD_1 = 1 << 31;
+        const SFD_2 = 1 << 32;
+        const SFD_3 = 1 << 33;
+        const SFD_4 = 1 << 34;
 
-        const BIT_RATE_110 = 1 << 34;
-        const BIT_RATE_850 = 1 << 35;
-        const BIT_RATE_6810 = 1 << 36;
-        const BIT_RATE_6810_ONLY = 1 << 37;
-        const BIT_RATE_27240 = 1 << 38;
+        const BIT_RATE_110 = 1 << 35;
+        const BIT_RATE_850 = 1 << 36;
+        const BIT_RATE_6810 = 1 << 37;
+        const BIT_RATE_6810_ONLY = 1 << 38;
+        const BIT_RATE_27240 = 1 << 39;
 
-        const LONG_FRAME_FORMAT = 1 << 39;
-        const CORRECT_TX_FCS = 1 << 40;
+        const LONG_FRAME_FORMAT = 1 << 40;
+        const CORRECT_TX_FCS = 1 << 41;
     }
 }
 
@@ -288,6 +275,7 @@ impl Capabilities {
 
     const fn from_prf(prf: MeanPrf) -> Self {
         match prf {
+            MeanPrf::Mhz4 => Self::PRF_4,
             MeanPrf::Mhz16 => Self::PRF_16,
             MeanPrf::Mhz62 => Self::PRF_62,
             MeanPrf::Mhz111 => Self::PRF_111,
@@ -345,7 +333,7 @@ pub enum State {
 pub struct RunConfig {
     pub channel: Channel,
     pub prf: MeanPrf,
-    pub preamble_code: PreambleCode,
+    pub preamble_code: u8,
     pub psr: Psr,
     pub sfd_type: SfdType,
     pub bit_rate: BitRate,
@@ -360,7 +348,7 @@ impl RunConfig {
         Self {
             channel: Channel::CH_9,
             prf: MeanPrf::Mhz62,
-            preamble_code: PreambleCode::new(9).unwrap(),
+            preamble_code: 9,
             psr: Psr::Symbols64,
             sfd_type: SfdType::Sfd0,
             bit_rate: BitRate::Kbs850,
@@ -382,7 +370,7 @@ impl Default for RunConfig {
 pub enum ConfigError {
     UnsupportedChannel(Channel),
     UnsupportedPrf(MeanPrf),
-    IncompatiblePreambleCode(PreambleCode, MeanPrf),
+    IncompatiblePreambleCode(u8, MeanPrf),
     UnsupportedPsr(Psr),
     UnsupportedSfd(SfdType),
     UnsupportedBitRate(BitRate),
@@ -402,7 +390,8 @@ impl RunConfig {
         if !capabilities.has_prf(self.prf) {
             return Err(ConfigError::UnsupportedPrf(self.prf));
         }
-        if self.preamble_code.prf() != self.prf {
+        let [min_code, max_code] = self.prf.code_range();
+        if !(min_code <= self.preamble_code && self.preamble_code <= max_code) {
             return Err(ConfigError::IncompatiblePreambleCode(
                 self.preamble_code,
                 self.prf,
@@ -528,6 +517,7 @@ pub trait Phy {
 // See IEEE 802.15.4-2020, Table 15-5
 pub const fn preamble_symbol_duration(prf: MeanPrf) -> time::Duration {
     match prf {
+        MeanPrf::Mhz4 => time::Duration::CHIP.mul_u32(31 * 64),
         MeanPrf::Mhz16 => time::Duration::CHIP.mul_u32(31 * 16),
         MeanPrf::Mhz62 => time::Duration::CHIP.mul_u32(127 * 4),
         MeanPrf::Mhz111 => time::Duration::CHIP.mul_u32(91 * 4),
