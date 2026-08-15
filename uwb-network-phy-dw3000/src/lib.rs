@@ -191,18 +191,6 @@ impl SfdType {
     }
 }
 
-/// DW3000 receiver operating parameter set.
-///
-/// Check DW3000 User Manual section 8.2.12.7 for details.
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum RxOps {
-    /// Parameter set 2, optimized for very short preambles, i.e. 64 symbols
-    ShortPreamble,
-    /// Parameter set 0, optimized for long preambles, i.e. 256 symbols or more
-    LongPreamble,
-}
-
 /// DW3000 preamble acquisition chunk size.
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -220,13 +208,24 @@ pub enum PreambleAcquisitionChunk {
 impl PreambleAcquisitionChunk {
     pub const MIN: PreambleAcquisitionChunk = PreambleAcquisitionChunk::Symbols4;
 
-    pub const fn as_symbols(self) -> u8 {
+    pub const fn as_symbols(self) -> u16 {
         match self {
             Self::Symbols4 => 4,
             Self::Symbols8 => 8,
             Self::Symbols16 => 16,
             Self::Symbols32 => 32,
         }
+    }
+}
+
+// TODO: tune performance for Symbols32
+fn recommended_pac_length(preamble_length: phy::PreambleLength) -> PreambleAcquisitionChunk {
+    if preamble_length < phy::PreambleLength::Symbols64 {
+        PreambleAcquisitionChunk::Symbols4
+    } else if preamble_length < phy::PreambleLength::Symbols128 {
+        PreambleAcquisitionChunk::Symbols8
+    } else {
+        PreambleAcquisitionChunk::Symbols16
     }
 }
 
@@ -269,7 +268,7 @@ struct RfConfig {
     pub channel: DevChannel,
     pub prf: phy::MeanPrf,
     pub pac: PreambleAcquisitionChunk,
-    pub rx_ops: RxOps,
+    pub preamble_length: phy::PreambleLength,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -412,9 +411,16 @@ async fn check_dev_id<IF: Interface>(
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct RunData {
+    config: phy::RunConfig,
+    pac: PreambleAcquisitionChunk,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum InnerState {
     Stopped,
-    Running(phy::RunConfig),
+    Running(RunData),
 }
 
 impl From<InnerState> for phy::State {
@@ -486,10 +492,6 @@ pub struct DeviceConfig {
     pub channel: phy::Channel,
     pub preamble_prf: phy::MeanPrf,
     pub sfd_type: SfdType,
-    /// Receiver operating parameter set.
-    pub rx_ops: RxOps,
-    /// Preamble acquisition chunk size.
-    pub pac: PreambleAcquisitionChunk,
     pub tx_power: TxPowerConfig,
 }
 
@@ -499,9 +501,6 @@ impl Default for DeviceConfig {
             channel: phy::Channel::CH_5,
             preamble_prf: phy::MeanPrf::Mhz62,
             sfd_type: SfdType::IeeeSfd0,
-            // DW3000 User Manual section 8.2.12.7 recommends this as default over POR.
-            rx_ops: RxOps::ShortPreamble,
-            pac: PreambleAcquisitionChunk::Symbols8,
             tx_power: TxPowerConfig::default(),
         }
     }
@@ -637,10 +636,14 @@ impl<IF: Interface> Dw3000Phy<IF> {
 
         let mut ral = self.interface.ral();
         ral.otp_cfg().write(|w| {
-            w.set_ops_sel(match config.rx_ops {
-                RxOps::ShortPreamble => regs::ReceiverParameterSet::Short,
-                RxOps::LongPreamble => regs::ReceiverParameterSet::Long,
-            });
+            w.set_ops_sel(
+                // Check DW3000 User Manual section 8.2.12.7 for details
+                if config.preamble_length >= phy::PreambleLength::Symbols256 {
+                    regs::ReceiverParameterSet::Long
+                } else {
+                    regs::ReceiverParameterSet::Short
+                },
+            );
             w.set_ops_kick(true);
         })?;
 
@@ -815,9 +818,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         pac: PreambleAcquisitionChunk,
         timeout: Option<NonZeroU16>,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
-        let preamble_toc = timeout.map_or(0, |count| {
-            u16::from(count).div_ceil(pac.as_symbols().into())
-        });
+        let preamble_toc = timeout.map_or(0, |count| u16::from(count).div_ceil(pac.as_symbols()));
         let mut ral = self.interface.ral();
         ral.pre_toc().write_bytes(preamble_toc)?;
         Ok(())
@@ -839,13 +840,14 @@ impl<IF: Interface> Dw3000Phy<IF> {
 
     fn set_sfd_timeout(
         &mut self,
+        pac: PreambleAcquisitionChunk,
         max_preamble_length: phy::PreambleLength,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
         // UserManual discourage disabling timeout
         // DW3000 UM, 8.2.7.2
         let max_preamble_length = max_preamble_length.as_symbols();
         let sfd_length = u16::from(u8::from(self.dev_config.sfd_type.length()));
-        let pac_size: u16 = self.dev_config.pac.as_symbols().into();
+        let pac_size = pac.as_symbols();
         let symbols = max_preamble_length.max(pac_size) - pac_size + sfd_length + 1;
 
         let mut ral = self.interface.ral();
@@ -960,11 +962,12 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             tx_code: run_config.preamble_code,
         };
 
+        let pac = recommended_pac_length(run_config.preamble_length);
         let base_config = RfConfig {
             channel: self.channel,
             prf: self.dev_config.preamble_prf,
-            pac: self.dev_config.pac,
-            rx_ops: self.dev_config.rx_ops,
+            preamble_length: run_config.preamble_length,
+            pac,
         };
 
         reset_power_up(&mut self.interface).await?;
@@ -979,7 +982,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         self.start_pll(base_config.channel).await?;
         self.configure_rf(base_config)?;
         self.calibrate_rx().await?;
-        self.set_sfd_timeout(run_config.preamble_length)?;
+        self.set_sfd_timeout(pac, run_config.preamble_length)?;
 
         let mut ral = self.interface.ral();
         ral.sys_cfg().write(|w| {
@@ -998,7 +1001,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
         self.interface.clear_all_events()?;
 
-        self.state = InnerState::Running(run_config);
+        self.state = InnerState::Running(RunData {
+            config: run_config,
+            pac,
+        });
 
         Ok(())
     }
@@ -1017,16 +1023,16 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         &mut self,
         psdu: &[u8],
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        let InnerState::Running(run_config) = &self.state else {
+        let InnerState::Running(run_data) = &self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
         };
 
-        if psdu.len() > usize::from(run_config.phr_format.max_psdu_length()) {
+        if psdu.len() > usize::from(run_data.config.phr_format.max_psdu_length()) {
             return Err(Error::Operation(OpError::BufferAccessBeyondPhrFormat(
                 psdu.len(),
-                run_config.phr_format,
+                run_data.config.phr_format,
             )));
         }
 
@@ -1039,16 +1045,16 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         &mut self,
         psdu: &mut [u8],
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        let InnerState::Running(run_config) = &self.state else {
+        let InnerState::Running(run_data) = &self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
         };
 
-        if psdu.len() > usize::from(run_config.phr_format.max_psdu_length()) {
+        if psdu.len() > usize::from(run_data.config.phr_format.max_psdu_length()) {
             return Err(Error::Operation(OpError::BufferAccessBeyondPhrFormat(
                 psdu.len(),
-                run_config.phr_format,
+                run_data.config.phr_format,
             )));
         }
 
@@ -1063,11 +1069,12 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         length: u16,
         start_at: Instant,
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        let InnerState::Running(run_config) = self.state else {
+        let InnerState::Running(run_data) = self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
         };
+        let run_config = run_data.config;
 
         if length > run_config.phr_format.max_psdu_length() {
             return Err(Error::Operation(OpError::TxLengthAbovePhrFormat(
@@ -1150,17 +1157,17 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         start_at: Instant,
         rx_timeout: Duration,
     ) -> Result<Option<phy::RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
-        if !matches!(self.state, InnerState::Running(_)) {
+        let InnerState::Running(run_data) = self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
-        }
+        };
 
         if rx_timeout > MAX_RX_FRAME_TIMEOUT {
             return Err(Error::Operation(OpError::ExcessiveRxTimeout(rx_timeout)));
         }
 
-        self.set_preamble_timeout(self.dev_config.pac, rx_config.max_preamble_hunt)?;
+        self.set_preamble_timeout(run_data.pac, rx_config.max_preamble_hunt)?;
         self.set_dx_time(start_at)?;
         self.set_rx_frame_timeout(rx_timeout)?;
 
