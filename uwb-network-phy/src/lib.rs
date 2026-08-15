@@ -157,20 +157,29 @@ impl Psr {
     }
 }
 
-#[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum SfdLength {
-    Symbols4 = 4,
-    Symbols8 = 8,
-    Symbols16 = 16,
-    Symbols32 = 32,
-    Symbols64 = 64,
+pub enum SfdType {
+    /// 0+0-+00-, IEEE 802.15.4 short 8-symbol SFD
+    Sfd0,
+    /// --+--, IEEE 802.15.4z short 4-symbol SFD
+    Sfd1,
+    /// ---+--+-, IEEE 802.15.4z defined 8-symbol SFD
+    Sfd2,
+    /// -----++--+--+--+-, IEEE 802.15.4z defined 16-symbol SFD
+    Sfd3,
+    /// -------+--+--+-+--+---++---+--++--, IEEE 802.15.4z defined 32-symbol SFD
+    Sfd4,
 }
 
-impl From<SfdLength> for u8 {
-    fn from(value: SfdLength) -> Self {
-        value as Self
+impl SfdType {
+    pub const fn as_symbols(self) -> u16 {
+        match self {
+            Self::Sfd1 => 4,
+            Self::Sfd0 | Self::Sfd2 => 8,
+            Self::Sfd3 => 16,
+            Self::Sfd4 => 32,
+        }
     }
 }
 
@@ -201,7 +210,7 @@ impl PhrFormat {
 
 bitflags! {
     #[cfg_attr(not(feature = "defmt"), derive(Clone, Copy, Eq, PartialEq, Debug))]
-    pub struct Capabilities: u32 {
+    pub struct Capabilities: u64 {
         const CH_0 = 1 << Channel::CH_0.as_number();
         const CH_1 = 1 << Channel::CH_1.as_number();
         const CH_2 = 1 << Channel::CH_2.as_number();
@@ -233,6 +242,12 @@ bitflags! {
         const PSR_1536 = 1 << 26;
         const PSR_2048 = 1 << 27;
         const PSR_4096 = 1 << 28;
+
+        const SFD_0 = 1 << 29;
+        const SFD_1 = 1 << 30;
+        const SFD_2 = 1 << 31;
+        const SFD_3 = 1 << 32;
+        const SFD_4 = 1 << 33;
     }
 }
 
@@ -241,16 +256,28 @@ impl Capabilities {
         self.contains(Self::from_channel(channel))
     }
 
-    pub fn has_psr(self, psr: Psr) -> bool {
-        self.contains(Self::from_psr(psr))
-    }
-
     pub fn has_prf(self, prf: MeanPrf) -> bool {
         self.contains(Self::from_prf(prf))
     }
 
+    pub fn has_psr(self, psr: Psr) -> bool {
+        self.contains(Self::from_psr(psr))
+    }
+
+    pub fn has_sfd(self, sfd_type: SfdType) -> bool {
+        self.contains(Self::from_sfd(sfd_type))
+    }
+
     const fn from_channel(channel: Channel) -> Self {
         Self::from_bits_truncate(1 << channel.as_number())
+    }
+
+    const fn from_prf(prf: MeanPrf) -> Self {
+        match prf {
+            MeanPrf::Mhz16 => Self::PRF_16,
+            MeanPrf::Mhz62 => Self::PRF_62,
+            MeanPrf::Mhz111 => Self::PRF_111,
+        }
     }
 
     const fn from_psr(psr: Psr) -> Self {
@@ -268,11 +295,13 @@ impl Capabilities {
         }
     }
 
-    const fn from_prf(prf: MeanPrf) -> Self {
-        match prf {
-            MeanPrf::Mhz16 => Self::PRF_16,
-            MeanPrf::Mhz62 => Self::PRF_62,
-            MeanPrf::Mhz111 => Self::PRF_111,
+    const fn from_sfd(sfd_type: SfdType) -> Self {
+        match sfd_type {
+            SfdType::Sfd0 => Self::SFD_0,
+            SfdType::Sfd1 => Self::SFD_1,
+            SfdType::Sfd2 => Self::SFD_2,
+            SfdType::Sfd3 => Self::SFD_3,
+            SfdType::Sfd4 => Self::SFD_4,
         }
     }
 }
@@ -293,6 +322,7 @@ pub struct RunConfig {
     pub channel: Channel,
     pub preamble_code: PreambleCode,
     pub psr: Psr,
+    pub sfd_type: SfdType,
     pub phr_format: PhrFormat,
     /// Match PHR bit rate to the PSDU bit rate
     ///
@@ -308,6 +338,7 @@ impl RunConfig {
             channel,
             preamble_code,
             psr: Psr::Symbols64,
+            sfd_type: SfdType::Sfd0,
             phr_format: PhrFormat::Standard,
             high_phr_bit_rate: false,
             correct_tx_fcs: false,
@@ -365,6 +396,7 @@ pub enum OpError {
     UnsupportedChannel(Channel),
     UnsupportedPrf(MeanPrf),
     UnsupportedPsr(Psr),
+    UnsupportedSfd(SfdType),
     ExcessiveRxTimeout(time::Duration),
     StartInstantPassed(time::Duration),
     BufferAccessBeyondPhrFormat(usize, PhrFormat),
@@ -409,7 +441,6 @@ pub trait Phy {
 
     fn state(&self) -> State;
     fn capabilities(&self) -> Capabilities;
-    fn sfd_length(&self) -> SfdLength;
     async fn stop(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>>;
     async fn start(
         &mut self,
@@ -463,10 +494,10 @@ pub const fn psdu_symbol_duration(bit_rate: BitRate) -> time::Duration {
     }
 }
 
-pub const fn shr_duration(prf: MeanPrf, sfd_length: SfdLength, psr: Psr) -> time::Duration {
+pub const fn shr_duration(prf: MeanPrf, sfd_type: SfdType, psr: Psr) -> time::Duration {
     let preamble_symbol_duration = preamble_symbol_duration(prf);
     let sync_length = psr.as_symbols();
-    let shr_length = sync_length + sfd_length as u8 as u16;
+    let shr_length = sync_length + sfd_type.as_symbols();
     preamble_symbol_duration.mul_u32(shr_length as u32)
 }
 

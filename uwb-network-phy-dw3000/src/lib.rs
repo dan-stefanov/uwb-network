@@ -46,7 +46,9 @@ const CAPABILITIES: phy::Capabilities = phy::Capabilities::CH_5
     .union(phy::Capabilities::PSR_1024)
     .union(phy::Capabilities::PSR_1536)
     .union(phy::Capabilities::PSR_2048)
-    .union(phy::Capabilities::PSR_4096);
+    .union(phy::Capabilities::PSR_4096)
+    .union(phy::Capabilities::SFD_0)
+    .union(phy::Capabilities::SFD_2);
 
 // minimum microsecond duration in host system relative to DW3000 clock
 const HOST_MICROSECOND_MIN: Duration = {
@@ -174,28 +176,6 @@ impl DevChannel {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum SfdType {
-    /// 0+0-+00-, IEEE 802.15.4 short 8-symbol SFD
-    IeeeSfd0,
-    /// ----+-00, Decawave-defined 8-symbols SFD
-    Decawave8,
-    /// ----+-+--++--+00, Decawave-defined 16-symbols SFD
-    Decawave16,
-    /// ---+--+-, IEEE 802.15.4z defined 8-symbol SFD
-    IeeeSfd2,
-}
-
-impl SfdType {
-    const fn length(self) -> phy::SfdLength {
-        match self {
-            SfdType::IeeeSfd0 | SfdType::Decawave8 | SfdType::IeeeSfd2 => phy::SfdLength::Symbols8,
-            SfdType::Decawave16 => phy::SfdLength::Symbols16,
-        }
-    }
-}
-
 /// DW3000 preamble acquisition chunk size.
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -279,6 +259,7 @@ struct RfConfig {
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct ChannelConfig {
     pub channel: DevChannel,
+    pub sfd_type: phy::SfdType,
     pub rx_code: phy::PreambleCode,
     pub tx_code: phy::PreambleCode,
 }
@@ -494,14 +475,12 @@ impl TxPowerConfig {
 
 #[non_exhaustive]
 pub struct DeviceConfig {
-    pub sfd_type: SfdType,
     pub tx_power: TxPowerConfig,
 }
 
 impl Default for DeviceConfig {
     fn default() -> Self {
         Self {
-            sfd_type: SfdType::IeeeSfd0,
             tx_power: TxPowerConfig::default(),
         }
     }
@@ -734,18 +713,18 @@ impl<IF: Interface> Dw3000Phy<IF> {
     }
 
     fn set_channel(&mut self, config: ChannelConfig) -> Result<(), Error<IF::Error, DeviceError>> {
-        let sfd_type = self.dev_config.sfd_type;
         let mut ral = self.interface.ral();
         ral.chan_ctrl().write(|w| {
             w.set_rf_chan(match config.channel {
                 DevChannel::Ch5 => regs::Channel::Channel5,
                 DevChannel::Ch9 => regs::Channel::Channel9,
             });
-            w.set_sfd_type(match sfd_type {
-                SfdType::IeeeSfd0 => regs::SfdType::IeeeSfd0,
-                SfdType::Decawave8 => regs::SfdType::Decawave8,
-                SfdType::Decawave16 => regs::SfdType::Decawave16,
-                SfdType::IeeeSfd2 => regs::SfdType::IeeeSfd2,
+            w.set_sfd_type(match config.sfd_type {
+                phy::SfdType::Sfd0 => regs::SfdType::IeeeSfd0,
+                phy::SfdType::Sfd2 => regs::SfdType::IeeeSfd2,
+                phy::SfdType::Sfd1 | phy::SfdType::Sfd3 | phy::SfdType::Sfd4 => {
+                    core::unreachable!()
+                }
             });
             w.set_tx_pcode(config.tx_code.as_number());
             w.set_rx_pcode(config.rx_code.as_number());
@@ -829,13 +808,14 @@ impl<IF: Interface> Dw3000Phy<IF> {
     fn set_sfd_timeout(
         &mut self,
         pac: PreambleAcquisitionChunk,
+        sfd_type: phy::SfdType,
         max_psr: phy::Psr,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
         // UserManual discourage disabling timeout
         // DW3000 UM, 8.2.7.2
         let max_psr = max_psr.as_symbols();
-        let sfd_length = u16::from(u8::from(self.dev_config.sfd_type.length()));
         let pac_size = pac.as_symbols();
+        let sfd_length = sfd_type.as_symbols();
         let symbols = max_psr.max(pac_size) - pac_size + sfd_length + 1;
 
         let mut ral = self.interface.ral();
@@ -914,10 +894,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         CAPABILITIES
     }
 
-    fn sfd_length(&self) -> phy::SfdLength {
-        self.dev_config.sfd_type.length()
-    }
-
     // TODO: go to sleep instead of shutdown
     async fn stop(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>> {
         self.shutdown()?;
@@ -945,8 +921,13 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(OpError::UnsupportedPrf(preamble_prf).into());
         }
 
+        if !self.capabilities().has_sfd(run_config.sfd_type) {
+            return Err(OpError::UnsupportedSfd(run_config.sfd_type).into());
+        }
+
         let channel_config = ChannelConfig {
             channel,
+            sfd_type: run_config.sfd_type,
             rx_code: run_config.preamble_code,
             tx_code: run_config.preamble_code,
         };
@@ -971,7 +952,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         self.start_pll(base_config.channel).await?;
         self.configure_rf(base_config)?;
         self.calibrate_rx().await?;
-        self.set_sfd_timeout(pac, run_config.psr)?;
+        self.set_sfd_timeout(pac, run_config.sfd_type, run_config.psr)?;
 
         let mut ral = self.interface.ral();
         ral.sys_cfg().write(|w| {
@@ -1078,7 +1059,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         }
 
         let shr_duration =
-            phy::shr_duration(run_data.preamble_prf, self.sfd_length(), run_config.psr);
+            phy::shr_duration(run_data.preamble_prf, run_config.sfd_type, run_config.psr);
         let rmarker_at = start_at + shr_duration;
 
         self.set_tx_config(tx_config, run_config.psr, length)?;

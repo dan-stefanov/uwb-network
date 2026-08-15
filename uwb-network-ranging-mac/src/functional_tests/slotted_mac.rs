@@ -42,7 +42,7 @@ where
     phy.start(run_config).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
 
-    let shr_duration = phy::shr_duration(phy::MeanPrf::Mhz62, phy.sfd_length(), run_config.psr);
+    let shr_duration = phy::shr_duration(phy::MeanPrf::Mhz62, run_config.sfd_type, run_config.psr);
 
     let mut beacon_psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
     {
@@ -143,7 +143,7 @@ where
     phy.start(run_config).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
 
-    let shr_duration = phy::shr_duration(phy::MeanPrf::Mhz62, phy.sfd_length(), run_config.psr);
+    let shr_duration = phy::shr_duration(phy::MeanPrf::Mhz62, run_config.sfd_type, run_config.psr);
 
     loop {
         let mut psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
