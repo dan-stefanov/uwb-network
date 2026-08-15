@@ -921,35 +921,12 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         // TODO: Check for updates at https://gist.github.com/egnor/455d510e11c22deafdec14b09da5bf54
 
-        if !self.capabilities().has_channel(run_config.channel) {
-            return Err(OpError::UnsupportedChannel(run_config.channel).into());
-        }
+        run_config
+            .check_capabilities(self.capabilities())
+            .map_err(OpError::UnsupportedConfig)?;
+
         let channel = unwrap!(DevChannel::new(run_config.channel));
-
-        if !self.capabilities().has_psr(run_config.psr) {
-            return Err(OpError::UnsupportedPsr(run_config.psr).into());
-        }
-
         let preamble_prf = run_config.preamble_code.prf();
-        if !self.capabilities().has_prf(preamble_prf) {
-            return Err(OpError::UnsupportedPrf(preamble_prf).into());
-        }
-
-        if !self.capabilities().has_sfd(run_config.sfd_type) {
-            return Err(OpError::UnsupportedSfd(run_config.sfd_type).into());
-        }
-
-        if !self.capabilities().has_bit_rate(run_config.bit_rate) {
-            return Err(OpError::UnsupportedBitRate(run_config.bit_rate).into());
-        }
-
-        if run_config.long_frame_format && !self.capabilities().has_long_frame_format() {
-            return Err(OpError::UnsupportedLongFrameFormat.into());
-        }
-
-        if run_config.correct_tx_fcs && !self.capabilities().has_correct_tx_fcs() {
-            return Err(OpError::UnsupportedCorrectTxFcs.into());
-        }
 
         let channel_config = ChannelConfig {
             channel,

@@ -254,31 +254,31 @@ bitflags! {
 }
 
 impl Capabilities {
-    pub fn has_channel(self, channel: Channel) -> bool {
+    pub const fn has_channel(self, channel: Channel) -> bool {
         self.contains(Self::from_channel(channel))
     }
 
-    pub fn has_prf(self, prf: MeanPrf) -> bool {
+    pub const fn has_prf(self, prf: MeanPrf) -> bool {
         self.contains(Self::from_prf(prf))
     }
 
-    pub fn has_psr(self, psr: Psr) -> bool {
+    pub const fn has_psr(self, psr: Psr) -> bool {
         self.contains(Self::from_psr(psr))
     }
 
-    pub fn has_sfd(self, sfd_type: SfdType) -> bool {
+    pub const fn has_sfd(self, sfd_type: SfdType) -> bool {
         self.contains(Self::from_sfd(sfd_type))
     }
 
-    pub fn has_bit_rate(self, bit_rate: BitRate) -> bool {
+    pub const fn has_bit_rate(self, bit_rate: BitRate) -> bool {
         self.contains(Self::from_bit_rate(bit_rate))
     }
 
-    pub fn has_long_frame_format(self) -> bool {
+    pub const fn has_long_frame_format(self) -> bool {
         self.contains(Self::LONG_FRAME_FORMAT)
     }
 
-    pub fn has_correct_tx_fcs(self) -> bool {
+    pub const fn has_correct_tx_fcs(self) -> bool {
         self.contains(Self::CORRECT_TX_FCS)
     }
 
@@ -369,6 +369,48 @@ impl RunConfig {
     }
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ConfigError {
+    UnsupportedChannel(Channel),
+    UnsupportedPrf(MeanPrf),
+    UnsupportedPsr(Psr),
+    UnsupportedSfd(SfdType),
+    UnsupportedBitRate(BitRate),
+    UnsupportedLongFrameFormat,
+    UnsupportedCorrectTxFcs,
+}
+
+impl RunConfig {
+    pub const fn check_capabilities(&self, capabilities: Capabilities) -> Result<(), ConfigError> {
+        if !capabilities.has_channel(self.channel) {
+            return Err(ConfigError::UnsupportedChannel(self.channel));
+        }
+        if !capabilities.has_psr(self.psr) {
+            return Err(ConfigError::UnsupportedPsr(self.psr));
+        }
+
+        let prf = self.preamble_code.prf();
+        if !capabilities.has_prf(prf) {
+            return Err(ConfigError::UnsupportedPrf(prf));
+        }
+        if !capabilities.has_sfd(self.sfd_type) {
+            return Err(ConfigError::UnsupportedSfd(self.sfd_type));
+        }
+        if !capabilities.has_bit_rate(self.bit_rate) {
+            return Err(ConfigError::UnsupportedBitRate(self.bit_rate));
+        }
+        if self.long_frame_format && !capabilities.has_long_frame_format() {
+            return Err(ConfigError::UnsupportedLongFrameFormat);
+        }
+        if self.correct_tx_fcs && !capabilities.has_correct_tx_fcs() {
+            return Err(ConfigError::UnsupportedCorrectTxFcs);
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RxConfig {
@@ -400,13 +442,7 @@ pub struct RxReport<T> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OpError {
     ProhibitedInCurrentState(State),
-    UnsupportedChannel(Channel),
-    UnsupportedPrf(MeanPrf),
-    UnsupportedPsr(Psr),
-    UnsupportedSfd(SfdType),
-    UnsupportedBitRate(BitRate),
-    UnsupportedLongFrameFormat,
-    UnsupportedCorrectTxFcs,
+    UnsupportedConfig(ConfigError),
     ExcessiveRxTimeout(time::Duration),
     StartInstantPassed(time::Duration),
     BufferAccessBeyondFrameFormat(usize, u16),
