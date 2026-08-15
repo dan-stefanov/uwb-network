@@ -15,12 +15,10 @@ const SLOT_COUNT: u8 = 5;
 const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
 
 const RX_CONFIG: phy::RxConfig = phy::RxConfig {
-    max_preamble_length: PreambleLength::Symbols64,
     max_preamble_hunt: None,
 };
 
 const TX_CONFIG: phy::TxConfig = phy::TxConfig {
-    preamble_length: PreambleLength::Symbols64,
     bit_rate: BitRate::Kbs850,
     ranging_flag: false,
 };
@@ -39,6 +37,7 @@ where
     let [min_code, _] = phy::ieee_allocated_code_range(phy.channel(), phy.preamble_prf());
     let run_config = phy::RunConfig {
         preamble_code: min_code,
+        preamble_length: PreambleLength::Symbols64,
         correct_tx_fcs: true,
         ..Default::default()
     };
@@ -49,7 +48,7 @@ where
     let shr_duration = phy::shr_duration(
         phy.preamble_prf(),
         phy.sfd_length(),
-        TX_CONFIG.preamble_length,
+        run_config.preamble_length,
     );
 
     let mut beacon_psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
@@ -147,6 +146,7 @@ where
     let [min_code, _] = phy::ieee_allocated_code_range(phy.channel(), phy.preamble_prf());
     let run_config = phy::RunConfig {
         preamble_code: min_code,
+        preamble_length: PreambleLength::Symbols64,
         correct_tx_fcs: true,
         ..Default::default()
     };
@@ -157,7 +157,7 @@ where
     let shr_duration = phy::shr_duration(
         phy.preamble_prf(),
         phy.sfd_length(),
-        TX_CONFIG.preamble_length,
+        run_config.preamble_length,
     );
 
     loop {

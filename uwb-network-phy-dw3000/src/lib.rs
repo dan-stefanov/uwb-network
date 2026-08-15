@@ -765,6 +765,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
     fn set_tx_config(
         &mut self,
         config: phy::TxConfig,
+        preamble_length: phy::PreambleLength,
         length: u16,
     ) -> Result<(), Error<IF::Error, DeviceError>> {
         const MAX_FRAME_LENGTH: u16 = 1023;
@@ -781,7 +782,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
                 phy::BitRate::Kbs6810 => regs::BitRate::Kbs6810,
             });
             w.set_tr(config.ranging_flag);
-            w.set_txpsr(match config.preamble_length {
+            w.set_txpsr(match preamble_length {
                 phy::PreambleLength::Symbols16 => regs::TxPreambleLength::Symbols16,
                 phy::PreambleLength::Symbols32 => regs::TxPreambleLength::Symbols32,
                 phy::PreambleLength::Symbols64 => regs::TxPreambleLength::Symbols64,
@@ -978,6 +979,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         self.start_pll(base_config.channel).await?;
         self.configure_rf(base_config)?;
         self.calibrate_rx().await?;
+        self.set_sfd_timeout(run_config.preamble_length)?;
 
         let mut ral = self.interface.ral();
         ral.sys_cfg().write(|w| {
@@ -1081,11 +1083,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         let shr_duration = phy::shr_duration(
             self.dev_config.preamble_prf,
             self.sfd_length(),
-            tx_config.preamble_length,
+            run_config.preamble_length,
         );
         let rmarker_at = start_at + shr_duration;
 
-        self.set_tx_config(tx_config, length)?;
+        self.set_tx_config(tx_config, run_config.preamble_length, length)?;
         self.set_dx_time(rmarker_at)?;
 
         self.interface.send_command(FastCommand::Dtx)?;
@@ -1158,7 +1160,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(Error::Operation(OpError::ExcessiveRxTimeout(rx_timeout)));
         }
 
-        self.set_sfd_timeout(rx_config.max_preamble_length)?;
         self.set_preamble_timeout(self.dev_config.pac, rx_config.max_preamble_hunt)?;
         self.set_dx_time(start_at)?;
         self.set_rx_frame_timeout(rx_timeout)?;

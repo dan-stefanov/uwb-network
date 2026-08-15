@@ -193,6 +193,7 @@ pub enum State {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RunConfig {
     pub preamble_code: u8,
+    pub preamble_length: PreambleLength,
     pub phr_format: PhrFormat,
     /// Match PHR bit rate to the PSDU bit rate
     ///
@@ -208,6 +209,7 @@ impl Default for RunConfig {
     fn default() -> Self {
         Self {
             preamble_code: 0,
+            preamble_length: PreambleLength::Symbols64,
             phr_format: PhrFormat::Standard,
             high_phr_bit_rate: false,
             correct_tx_fcs: false,
@@ -218,7 +220,6 @@ impl Default for RunConfig {
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TxConfig {
-    pub preamble_length: PreambleLength,
     pub bit_rate: BitRate,
     pub ranging_flag: bool,
 }
@@ -226,7 +227,6 @@ pub struct TxConfig {
 impl Default for TxConfig {
     fn default() -> Self {
         Self {
-            preamble_length: PreambleLength::Symbols64,
             bit_rate: BitRate::Kbs850,
             ranging_flag: false,
         }
@@ -242,19 +242,12 @@ pub struct RxConfig {
     /// Once timeout has expired, implementation may stop reception to
     /// save power.
     pub max_preamble_hunt: Option<NonZeroU16>,
-    /// Maximum length of rx frame preamble in symbols
-    ///
-    /// Implementation should be able to receive frames of this duration.
-    /// Implementation may restart the preamble hunt, if SFD did not happened
-    /// after this amount of preamble symbols.
-    pub max_preamble_length: PreambleLength,
 }
 
 impl Default for RxConfig {
     fn default() -> Self {
         Self {
             max_preamble_hunt: None,
-            max_preamble_length: PreambleLength::Symbols4096,
         }
     }
 }
