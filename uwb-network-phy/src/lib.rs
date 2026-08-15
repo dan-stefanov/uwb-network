@@ -198,23 +198,8 @@ pub enum BitRate {
     Kbs27240,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum PhrFormat {
-    /// Defined by IEEE 802.15.4, PSDU is 0-127 octets
-    Standard,
-    /// Defined by IEEE 802.15.8, PSDU is 0-1023 octets
-    Long,
-}
-
-impl PhrFormat {
-    pub const fn max_psdu_length(self) -> u16 {
-        match self {
-            PhrFormat::Standard => 127,
-            PhrFormat::Long => 1023,
-        }
-    }
-}
+pub const MAX_PSDU_LENGTH: u16 = 127;
+pub const MAX_LONG_PSDU_LENGTH: u16 = 1023;
 
 bitflags! {
     #[cfg_attr(not(feature = "defmt"), derive(Clone, Copy, Eq, PartialEq, Debug))]
@@ -262,6 +247,8 @@ bitflags! {
         const BIT_RATE_6810 = 1 << 36;
         const BIT_RATE_6810_ONLY = 1 << 37;
         const BIT_RATE_27240 = 1 << 38;
+
+        const LONG_FRAME_FORMAT = 1 << 39;
     }
 }
 
@@ -284,6 +271,10 @@ impl Capabilities {
 
     pub fn has_bit_rate(self, bit_rate: BitRate) -> bool {
         self.contains(Self::from_bit_rate(bit_rate))
+    }
+
+    pub fn has_long_frame_format(self) -> bool {
+        self.contains(Self::LONG_FRAME_FORMAT)
     }
 
     const fn from_channel(channel: Channel) -> Self {
@@ -352,7 +343,7 @@ pub struct RunConfig {
     pub psr: Psr,
     pub sfd_type: SfdType,
     pub bit_rate: BitRate,
-    pub phr_format: PhrFormat,
+    pub long_frame_format: bool,
     /// Replace last FCS_LENGTH octets with calculated FCS
     pub correct_tx_fcs: bool,
 }
@@ -365,7 +356,7 @@ impl RunConfig {
             psr: Psr::Symbols64,
             sfd_type: SfdType::Sfd0,
             bit_rate: BitRate::Kbs850,
-            phr_format: PhrFormat::Standard,
+            long_frame_format: false,
             correct_tx_fcs: false,
         }
     }
@@ -421,10 +412,11 @@ pub enum OpError {
     UnsupportedPsr(Psr),
     UnsupportedSfd(SfdType),
     UnsupportedBitRate(BitRate),
+    UnsupportedLongFrameFormat,
     ExcessiveRxTimeout(time::Duration),
     StartInstantPassed(time::Duration),
-    BufferAccessBeyondPhrFormat(usize, PhrFormat),
-    TxLengthAbovePhrFormat(u16, PhrFormat),
+    BufferAccessBeyondFrameFormat(usize, u16),
+    TxLengthAboveFrameFormat(u16, u16),
     TxLengthLessThanFcs(u16),
 }
 

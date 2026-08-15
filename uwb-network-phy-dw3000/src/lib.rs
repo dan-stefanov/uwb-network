@@ -51,7 +51,8 @@ const CAPABILITIES: phy::Capabilities = phy::Capabilities::CH_5
     .union(phy::Capabilities::SFD_2)
     .union(phy::Capabilities::BIT_RATE_850)
     .union(phy::Capabilities::BIT_RATE_6810)
-    .union(phy::Capabilities::BIT_RATE_6810_ONLY);
+    .union(phy::Capabilities::BIT_RATE_6810_ONLY)
+    .union(phy::Capabilities::LONG_FRAME_FORMAT);
 
 // minimum microsecond duration in host system relative to DW3000 clock
 const HOST_MICROSECOND_MIN: Duration = {
@@ -214,6 +215,14 @@ fn recommended_pac_length(psr: phy::Psr) -> PreambleAcquisitionChunk {
         PreambleAcquisitionChunk::Symbols8
     } else {
         PreambleAcquisitionChunk::Symbols16
+    }
+}
+
+fn max_psdu_length(long_frame_format: bool) -> u16 {
+    if long_frame_format {
+        phy::MAX_LONG_PSDU_LENGTH
+    } else {
+        phy::MAX_PSDU_LENGTH
     }
 }
 
@@ -934,6 +943,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(OpError::UnsupportedBitRate(run_config.bit_rate).into());
         }
 
+        if run_config.long_frame_format && !self.capabilities().has_long_frame_format() {
+            return Err(OpError::UnsupportedLongFrameFormat.into());
+        }
+
         let channel_config = ChannelConfig {
             channel,
             sfd_type: run_config.sfd_type,
@@ -966,9 +979,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         let mut ral = self.interface.ral();
         ral.sys_cfg().write(|w| {
             w.set_dis_fcs_tx(!run_config.correct_tx_fcs);
-            w.set_phr_mode(match run_config.phr_format {
-                phy::PhrFormat::Standard => regs::PhrMode::StandardFrame,
-                phy::PhrFormat::Long => regs::PhrMode::LongFrame,
+            w.set_phr_mode(if run_config.long_frame_format {
+                regs::PhrMode::LongFrame
+            } else {
+                regs::PhrMode::StandardFrame
             });
             w.set_phr_6m8(run_config.bit_rate == phy::BitRate::Kbs6810Only);
             w.set_cia_ipatov(true);
@@ -1009,10 +1023,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             )));
         };
 
-        if psdu.len() > usize::from(run_data.config.phr_format.max_psdu_length()) {
-            return Err(Error::Operation(OpError::BufferAccessBeyondPhrFormat(
+        let max_psdu_length = max_psdu_length(run_data.config.long_frame_format);
+        if psdu.len() > usize::from(max_psdu_length) {
+            return Err(Error::Operation(OpError::BufferAccessBeyondFrameFormat(
                 psdu.len(),
-                run_data.config.phr_format,
+                max_psdu_length,
             )));
         }
 
@@ -1031,10 +1046,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             )));
         };
 
-        if psdu.len() > usize::from(run_data.config.phr_format.max_psdu_length()) {
-            return Err(Error::Operation(OpError::BufferAccessBeyondPhrFormat(
+        let max_psdu_length = max_psdu_length(run_data.config.long_frame_format);
+        if psdu.len() > usize::from(max_psdu_length) {
+            return Err(Error::Operation(OpError::BufferAccessBeyondFrameFormat(
                 psdu.len(),
-                run_data.config.phr_format,
+                max_psdu_length,
             )));
         }
 
@@ -1056,10 +1072,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         };
         let run_config = run_data.config;
 
-        if length > run_config.phr_format.max_psdu_length() {
-            return Err(Error::Operation(OpError::TxLengthAbovePhrFormat(
+        let max_psdu_length = max_psdu_length(run_config.long_frame_format);
+        if length > max_psdu_length {
+            return Err(Error::Operation(OpError::TxLengthAboveFrameFormat(
                 length,
-                run_config.phr_format,
+                max_psdu_length,
             )));
         }
 

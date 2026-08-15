@@ -8,7 +8,7 @@ const RX_DELAY: Duration = Duration::RSTU.mul_u32(1000);
 const RX_TIMEOUT: Duration = Duration::RSTU.mul_u32(1_000_000);
 const PREAMBLE_CODE: phy::PreambleCode = phy::PreambleCode::new(9).unwrap();
 
-const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
+const MAX_PSDU_SIZE: usize = phy::MAX_PSDU_LENGTH as usize;
 
 pub async fn initiator<PHY>(phy: &mut PHY, channel: phy::Channel)
 where

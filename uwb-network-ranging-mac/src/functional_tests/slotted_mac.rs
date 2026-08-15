@@ -12,7 +12,7 @@ const TURNAROUND_DURATION: Duration = Duration::RSTU.mul_u32(1000);
 const SLOT_COUNT: u8 = 5;
 const PREAMBLE_CODE: phy::PreambleCode = phy::PreambleCode::new(9).unwrap();
 
-const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
+const MAX_PSDU_SIZE: usize = phy::MAX_PSDU_LENGTH as usize;
 
 const RX_CONFIG: phy::RxConfig = phy::RxConfig {
     max_preamble_hunt: None,

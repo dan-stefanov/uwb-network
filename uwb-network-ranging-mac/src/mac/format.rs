@@ -112,7 +112,7 @@ mod test {
     use core::num::NonZero;
     use nested_ie::rd_ie::RmSubPeriodUsage;
 
-    const MAX_PSDU_SIZE: usize = crate::phy::PhrFormat::Standard.max_psdu_length() as usize;
+    const MAX_PSDU_SIZE: usize = crate::phy::MAX_PSDU_LENGTH as usize;
 
     #[test]
     fn beacon() {
