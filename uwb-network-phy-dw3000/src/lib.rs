@@ -52,7 +52,8 @@ const CAPABILITIES: phy::Capabilities = phy::Capabilities::CH_5
     .union(phy::Capabilities::BIT_RATE_850)
     .union(phy::Capabilities::BIT_RATE_6810)
     .union(phy::Capabilities::BIT_RATE_6810_ONLY)
-    .union(phy::Capabilities::LONG_FRAME_FORMAT);
+    .union(phy::Capabilities::LONG_FRAME_FORMAT)
+    .union(phy::Capabilities::CORRECT_TX_FCS);
 
 // minimum microsecond duration in host system relative to DW3000 clock
 const HOST_MICROSECOND_MIN: Duration = {
@@ -944,6 +945,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
         if run_config.long_frame_format && !self.capabilities().has_long_frame_format() {
             return Err(OpError::UnsupportedLongFrameFormat.into());
+        }
+
+        if run_config.correct_tx_fcs && !self.capabilities().has_correct_tx_fcs() {
+            return Err(OpError::UnsupportedCorrectTxFcs.into());
         }
 
         let channel_config = ChannelConfig {

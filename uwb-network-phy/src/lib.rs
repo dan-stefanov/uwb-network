@@ -249,6 +249,7 @@ bitflags! {
         const BIT_RATE_27240 = 1 << 38;
 
         const LONG_FRAME_FORMAT = 1 << 39;
+        const CORRECT_TX_FCS = 1 << 40;
     }
 }
 
@@ -275,6 +276,10 @@ impl Capabilities {
 
     pub fn has_long_frame_format(self) -> bool {
         self.contains(Self::LONG_FRAME_FORMAT)
+    }
+
+    pub fn has_correct_tx_fcs(self) -> bool {
+        self.contains(Self::CORRECT_TX_FCS)
     }
 
     const fn from_channel(channel: Channel) -> Self {
@@ -401,6 +406,7 @@ pub enum OpError {
     UnsupportedSfd(SfdType),
     UnsupportedBitRate(BitRate),
     UnsupportedLongFrameFormat,
+    UnsupportedCorrectTxFcs,
     ExcessiveRxTimeout(time::Duration),
     StartInstantPassed(time::Duration),
     BufferAccessBeyondFrameFormat(usize, u16),
