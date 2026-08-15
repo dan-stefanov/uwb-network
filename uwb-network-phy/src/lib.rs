@@ -262,13 +262,7 @@ impl Default for RxConfig {
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RxReport<T> {
-    /// Preamble length from PHR, only for 127-octet format
-    pub preamble_length_phr: Option<PreambleLength>,
-    /// Preamble length estimation based on accumulated preamble count
-    pub preamble_length_acc: PreambleLength,
-    pub ranging_flag: bool,
     pub length: u16,
-    pub bit_rate: BitRate,
     pub fcs_good: bool,
     pub timestamp: T,
 }

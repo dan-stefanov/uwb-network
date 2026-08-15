@@ -279,20 +279,6 @@ struct ChannelConfig {
     pub tx_code: u8,
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct RxFrameInfo {
-    pub frame_length: u16,
-    pub bit_rate: phy::BitRate,
-    pub ranging_flag: bool,
-    /// Preamble length according to PHR, 127 octet frame only
-    ///
-    /// Valid values: 16, 64, 1024, 4096
-    pub preamble_length_phr: Option<phy::PreambleLength>,
-    /// Preamble length by accumulated symbols
-    pub preamble_length_acc: phy::PreambleLength,
-}
-
 struct OtpData {
     ldotune_cal_set: bool,
     xtal_trim: u8,
@@ -886,48 +872,11 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(())
     }
 
-    fn get_rx_frame_info(
-        &mut self,
-        phr_format: phy::PhrFormat,
-    ) -> Result<RxFrameInfo, Error<IF::Error, DeviceError>> {
+    fn get_rx_frame_length(&mut self) -> Result<u16, Error<IF::Error, DeviceError>> {
         let mut ral = self.interface.ral();
-        let rx_finfo = ral.rx_finfo().read()?;
+        let rx_info = ral.rx_finfo_short().read()?;
 
-        let preamble_length_phr = match rx_finfo.rxpsr() {
-            regs::RxPreambleLength::Symbols16 => phy::PreambleLength::Symbols16,
-            regs::RxPreambleLength::Symbols64 => phy::PreambleLength::Symbols64,
-            regs::RxPreambleLength::Symbols1024 => phy::PreambleLength::Symbols1024,
-            regs::RxPreambleLength::Symbols4096 => phy::PreambleLength::Symbols4096,
-        };
-
-        let sfd_length = u16::from(u8::from(self.dev_config.sfd_type.length()));
-        let acc_count = rx_finfo.rxpacc().max(sfd_length) - sfd_length;
-        let preamble_length_acc = match acc_count {
-            0..=16 => phy::PreambleLength::Symbols16,
-            17..=32 => phy::PreambleLength::Symbols32,
-            33..=64 => phy::PreambleLength::Symbols64,
-            65..=128 => phy::PreambleLength::Symbols128,
-            129..=256 => phy::PreambleLength::Symbols256,
-            257..=512 => phy::PreambleLength::Symbols512,
-            513..=1024 => phy::PreambleLength::Symbols1024,
-            1025..=1536 => phy::PreambleLength::Symbols1536,
-            1537..=2048 => phy::PreambleLength::Symbols2048,
-            2049.. => phy::PreambleLength::Symbols4096,
-        };
-
-        Ok(RxFrameInfo {
-            frame_length: rx_finfo.rxflen(),
-            bit_rate: match rx_finfo.rxbr() {
-                regs::BitRate::Kbs850 => phy::BitRate::Kbs850,
-                regs::BitRate::Kbs6810 => phy::BitRate::Kbs6810,
-            },
-            ranging_flag: rx_finfo.rng(),
-            preamble_length_phr: match phr_format {
-                phy::PhrFormat::Standard => Some(preamble_length_phr),
-                phy::PhrFormat::Long => None,
-            },
-            preamble_length_acc,
-        })
+        Ok(rx_info.rxflen())
     }
 
     fn get_sys_timestamp(&mut self) -> Result<Instant, Error<IF::Error, DeviceError>> {
@@ -1199,11 +1148,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         start_at: Instant,
         rx_timeout: Duration,
     ) -> Result<Option<phy::RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
-        let InnerState::Running(run_config) = self.state else {
+        if !matches!(self.state, InnerState::Running(_)) {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
-        };
+        }
 
         if rx_timeout > MAX_RX_FRAME_TIMEOUT {
             return Err(Error::Operation(OpError::ExcessiveRxTimeout(rx_timeout)));
@@ -1253,15 +1202,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Ok(None);
         }
 
-        let frame_info = self.get_rx_frame_info(run_config.phr_format)?;
+        let frame_length = self.get_rx_frame_length()?;
         let timestamp = self.get_fine_rx_timestamp()?;
 
         Ok(Some(phy::RxReport {
-            preamble_length_phr: frame_info.preamble_length_phr,
-            preamble_length_acc: frame_info.preamble_length_acc,
-            bit_rate: frame_info.bit_rate,
-            ranging_flag: frame_info.ranging_flag,
-            length: frame_info.frame_length,
+            length: frame_length,
             fcs_good: events.contains(Events::RXFCG),
             timestamp,
         }))
