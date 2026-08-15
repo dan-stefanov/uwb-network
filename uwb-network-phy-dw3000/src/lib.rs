@@ -932,8 +932,8 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         let channel_config = ChannelConfig {
             channel,
             sfd_type: run_config.sfd_type,
-            rx_code: run_config.preamble_code,
-            tx_code: run_config.preamble_code,
+            rx_code: run_config.rx_preamble_code,
+            tx_code: run_config.tx_preamble_code,
         };
 
         let pac = recommended_pac_length(run_config.psr);

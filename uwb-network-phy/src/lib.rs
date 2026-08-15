@@ -333,7 +333,8 @@ pub enum State {
 pub struct RunConfig {
     pub channel: Channel,
     pub prf: MeanPrf,
-    pub preamble_code: u8,
+    pub rx_preamble_code: u8,
+    pub tx_preamble_code: u8,
     pub psr: Psr,
     pub sfd_type: SfdType,
     pub bit_rate: BitRate,
@@ -348,7 +349,8 @@ impl RunConfig {
         Self {
             channel: Channel::CH_9,
             prf: MeanPrf::Mhz62,
-            preamble_code: 9,
+            rx_preamble_code: 9,
+            tx_preamble_code: 9,
             psr: Psr::Symbols64,
             sfd_type: SfdType::Sfd0,
             bit_rate: BitRate::Kbs850,
@@ -370,7 +372,8 @@ impl Default for RunConfig {
 pub enum ConfigError {
     UnsupportedChannel(Channel),
     UnsupportedPrf(MeanPrf),
-    IncompatiblePreambleCode(u8, MeanPrf),
+    InvalidRxPreambleCode(u8, MeanPrf),
+    InvalidTxPreambleCode(u8, MeanPrf),
     UnsupportedPsr(Psr),
     UnsupportedSfd(SfdType),
     UnsupportedBitRate(BitRate),
@@ -391,9 +394,15 @@ impl RunConfig {
             return Err(ConfigError::UnsupportedPrf(self.prf));
         }
         let [min_code, max_code] = self.prf.code_range();
-        if !(min_code <= self.preamble_code && self.preamble_code <= max_code) {
-            return Err(ConfigError::IncompatiblePreambleCode(
-                self.preamble_code,
+        if !(min_code <= self.rx_preamble_code && self.rx_preamble_code <= max_code) {
+            return Err(ConfigError::InvalidRxPreambleCode(
+                self.rx_preamble_code,
+                self.prf,
+            ));
+        }
+        if !(min_code <= self.tx_preamble_code && self.tx_preamble_code <= max_code) {
+            return Err(ConfigError::InvalidTxPreambleCode(
+                self.tx_preamble_code,
                 self.prf,
             ));
         }
