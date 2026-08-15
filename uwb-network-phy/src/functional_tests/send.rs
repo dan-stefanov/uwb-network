@@ -9,7 +9,7 @@ const RX_TIMEOUT: Duration = Duration::RSTU.mul_u32(1_000_000);
 
 const MAX_PSDU_SIZE: usize = phy::PhrFormat::Standard.max_psdu_length() as usize;
 
-pub async fn initiator<PHY>(phy: &mut PHY)
+pub async fn initiator<PHY>(phy: &mut PHY, channel: phy::Channel)
 where
     PHY: phy::Phy,
     PHY::Instant: defmt::Format,
@@ -18,8 +18,9 @@ where
 {
     info!("Run as initiator");
 
-    let [min_code, _] = phy::ieee_allocated_code_range(phy.channel(), phy.preamble_prf());
+    let [min_code, _] = phy::ieee_allocated_code_range(channel, phy.preamble_prf());
     let run_config = phy::RunConfig {
+        channel,
         preamble_code: min_code,
         correct_tx_fcs: true,
         ..Default::default()
@@ -52,7 +53,7 @@ where
     }
 }
 
-pub async fn responder<PHY>(phy: &mut PHY)
+pub async fn responder<PHY>(phy: &mut PHY, channel: phy::Channel)
 where
     PHY: phy::Phy,
     PHY::Instant: defmt::Format,
@@ -63,8 +64,9 @@ where
 
     info!("Configure");
 
-    let [min_code, _] = phy::ieee_allocated_code_range(phy.channel(), phy.preamble_prf());
+    let [min_code, _] = phy::ieee_allocated_code_range(channel, phy.preamble_prf());
     let run_config = phy::RunConfig {
+        channel,
         preamble_code: min_code,
         ..Default::default()
     };

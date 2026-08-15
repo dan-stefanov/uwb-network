@@ -23,7 +23,7 @@ const TX_CONFIG: phy::TxConfig = phy::TxConfig {
     ranging_flag: false,
 };
 
-pub async fn initiator<PHY>(phy: &mut PHY)
+pub async fn initiator<PHY>(phy: &mut PHY, channel: phy::Channel)
 where
     PHY: phy::Phy,
     PHY::Instant: defmt::Format,
@@ -34,8 +34,9 @@ where
 
     info!("Configure");
 
-    let [min_code, _] = phy::ieee_allocated_code_range(phy.channel(), phy.preamble_prf());
+    let [min_code, _] = phy::ieee_allocated_code_range(channel, phy.preamble_prf());
     let run_config = phy::RunConfig {
+        channel,
         preamble_code: min_code,
         psr: phy::Psr::Symbols64,
         correct_tx_fcs: true,
@@ -129,7 +130,7 @@ where
     }
 }
 
-pub async fn responder<PHY>(phy: &mut PHY)
+pub async fn responder<PHY>(phy: &mut PHY, channel: phy::Channel)
 where
     PHY: phy::Phy,
     PHY::Instant: defmt::Format,
@@ -139,8 +140,9 @@ where
     info!("Run as responder");
 
     info!("Configure");
-    let [min_code, _] = phy::ieee_allocated_code_range(phy.channel(), phy.preamble_prf());
+    let [min_code, _] = phy::ieee_allocated_code_range(channel, phy.preamble_prf());
     let run_config = phy::RunConfig {
+        channel,
         preamble_code: min_code,
         psr: phy::Psr::Symbols64,
         correct_tx_fcs: true,

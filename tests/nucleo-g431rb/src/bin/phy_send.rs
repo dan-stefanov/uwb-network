@@ -67,9 +67,9 @@ async fn main(_spawner: Spawner) {
         unwrap!(Dw3000Phy::init(dw_interface, nucleo_g431rb::dw3000_device_config()).await);
 
     if cfg!(feature = "initiator") {
-        phy::functional_tests::send::initiator(&mut phy).await;
+        phy::functional_tests::send::initiator(&mut phy, nucleo_g431rb::UWB_CHANNEL).await;
     } else {
-        phy::functional_tests::send::responder(&mut phy).await;
+        phy::functional_tests::send::responder(&mut phy, nucleo_g431rb::UWB_CHANNEL).await;
     }
 
     info!("Power off UWB module");

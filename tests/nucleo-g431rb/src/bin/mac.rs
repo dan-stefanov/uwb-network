@@ -52,9 +52,9 @@ async fn run_mac_worker(dw_peripheral: DwPeripheral) {
         unwrap!(Dw3000Phy::init(dw_interface, nucleo_g431rb::dw3000_device_config()).await);
 
     if cfg!(feature = "initiator") {
-        mac::functional_tests::slotted_mac::initiator(&mut phy).await;
+        mac::functional_tests::slotted_mac::initiator(&mut phy, nucleo_g431rb::UWB_CHANNEL).await;
     } else {
-        mac::functional_tests::slotted_mac::responder(&mut phy).await;
+        mac::functional_tests::slotted_mac::responder(&mut phy, nucleo_g431rb::UWB_CHANNEL).await;
     }
 
     info!("Power off UWB module");

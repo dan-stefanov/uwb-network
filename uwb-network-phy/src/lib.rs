@@ -260,6 +260,7 @@ pub enum State {
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RunConfig {
+    pub channel: Channel,
     pub preamble_code: u8,
     pub psr: Psr,
     pub phr_format: PhrFormat,
@@ -276,6 +277,7 @@ pub struct RunConfig {
 impl Default for RunConfig {
     fn default() -> Self {
         Self {
+            channel: Channel::CH_5,
             preamble_code: 0,
             psr: Psr::Symbols64,
             phr_format: PhrFormat::Standard,
@@ -332,6 +334,7 @@ pub struct RxReport<T> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OpError {
     ProhibitedInCurrentState(State),
+    UnsupportedChannel(Channel),
     IncompatiblePreambleCode(u8, MeanPrf),
     UnsupportedPsr(Psr),
     ExcessiveRxTimeout(time::Duration),
@@ -378,7 +381,6 @@ pub trait Phy {
 
     fn state(&self) -> State;
     fn capabilities(&self) -> Capabilities;
-    fn channel(&self) -> Channel;
     fn preamble_prf(&self) -> MeanPrf;
     fn sfd_length(&self) -> SfdLength;
     async fn stop(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>>;

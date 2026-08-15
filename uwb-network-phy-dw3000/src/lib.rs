@@ -172,15 +172,6 @@ impl DevChannel {
     }
 }
 
-impl From<DevChannel> for phy::Channel {
-    fn from(channel: DevChannel) -> Self {
-        match channel {
-            DevChannel::Ch5 => Self::CH_5,
-            DevChannel::Ch9 => Self::CH_9,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SfdType {
@@ -448,7 +439,6 @@ pub struct Dw3000Phy<IF> {
     interface: InterfaceWrapper<IF>,
     otp: OtpData,
     dev_config: DeviceConfig,
-    channel: DevChannel,
     state: InnerState,
 }
 
@@ -501,7 +491,6 @@ impl TxPowerConfig {
 
 #[non_exhaustive]
 pub struct DeviceConfig {
-    pub channel: phy::Channel,
     pub preamble_prf: phy::MeanPrf,
     pub sfd_type: SfdType,
     pub tx_power: TxPowerConfig,
@@ -510,7 +499,6 @@ pub struct DeviceConfig {
 impl Default for DeviceConfig {
     fn default() -> Self {
         Self {
-            channel: phy::Channel::CH_5,
             preamble_prf: phy::MeanPrf::Mhz62,
             sfd_type: SfdType::IeeeSfd0,
             tx_power: TxPowerConfig::default(),
@@ -532,9 +520,6 @@ impl<IF: Interface> Dw3000Phy<IF> {
             "Unsupported PRF {:?}",
             dev_config.preamble_prf
         );
-        let channel = DevChannel::new(dev_config.channel)
-            .unwrap_or_else(|| panic!("Unsupported channel {:?}", dev_config.channel));
-
         let mut interface = InterfaceWrapper(interface);
         reset_power_up(&mut interface).await?;
         check_dev_id(&mut interface).await?;
@@ -545,7 +530,6 @@ impl<IF: Interface> Dw3000Phy<IF> {
             interface,
             otp,
             dev_config,
-            channel,
             state: InnerState::Stopped,
         })
     }
@@ -938,10 +922,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         CAPABILITIES
     }
 
-    fn channel(&self) -> phy::Channel {
-        self.channel.into()
-    }
-
     fn preamble_prf(&self) -> phy::MeanPrf {
         self.dev_config.preamble_prf
     }
@@ -963,6 +943,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
     ) -> Result<(), Error<Self::IoError, Self::DevError>> {
         // TODO: Check for updates at https://gist.github.com/egnor/455d510e11c22deafdec14b09da5bf54
 
+        if !self.capabilities().has_channel(run_config.channel) {
+            return Err(OpError::UnsupportedChannel(run_config.channel).into());
+        }
+        let channel = unwrap!(DevChannel::new(run_config.channel));
+
         if !self.capabilities().has_psr(run_config.psr) {
             return Err(OpError::UnsupportedPsr(run_config.psr).into());
         }
@@ -977,14 +962,14 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         }
 
         let channel_config = ChannelConfig {
-            channel: self.channel,
+            channel,
             rx_code: run_config.preamble_code,
             tx_code: run_config.preamble_code,
         };
 
         let pac = recommended_pac_length(run_config.psr);
         let base_config = RfConfig {
-            channel: self.channel,
+            channel,
             prf: self.dev_config.preamble_prf,
             psr: run_config.psr,
             pac,
