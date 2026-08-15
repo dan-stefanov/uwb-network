@@ -10,8 +10,6 @@ const SLOT_DURATION: Duration = Duration::RSTU.mul_u32(10000);
 const TURNAROUND_DURATION: Duration = Duration::RSTU.mul_u32(1000);
 
 const SLOT_COUNT: u8 = 5;
-const PREAMBLE_CODE: phy::PreambleCode = phy::PreambleCode::new(9).unwrap();
-
 const MAX_PSDU_SIZE: usize = phy::MAX_PSDU_LENGTH as usize;
 
 pub async fn initiator<PHY>(phy: &mut PHY, channel: phy::Channel)
@@ -25,14 +23,15 @@ where
 
     info!("Configure");
 
-    let mut run_config = phy::RunConfig::new(channel, PREAMBLE_CODE);
+    let mut run_config = phy::RunConfig::new();
+    run_config.channel = channel;
     run_config.psr = phy::Psr::Symbols64;
     run_config.correct_tx_fcs = true;
 
     phy.start(run_config).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
 
-    let shr_duration = phy::shr_duration(phy::MeanPrf::Mhz62, run_config.sfd_type, run_config.psr);
+    let shr_duration = phy::shr_duration(run_config.prf, run_config.sfd_type, run_config.psr);
 
     let mut beacon_psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
     {
@@ -124,14 +123,15 @@ where
     info!("Run as responder");
 
     info!("Configure");
-    let mut run_config = phy::RunConfig::new(channel, PREAMBLE_CODE);
+    let mut run_config = phy::RunConfig::new();
+    run_config.channel = channel;
     run_config.psr = phy::Psr::Symbols64;
     run_config.correct_tx_fcs = true;
 
     phy.start(run_config).await.unwrap();
     assert_eq!(phy.state(), phy::State::Running);
 
-    let shr_duration = phy::shr_duration(phy::MeanPrf::Mhz62, run_config.sfd_type, run_config.psr);
+    let shr_duration = phy::shr_duration(run_config.prf, run_config.sfd_type, run_config.psr);
 
     loop {
         let mut psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();

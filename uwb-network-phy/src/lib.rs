@@ -339,11 +339,12 @@ pub enum State {
     Running,
 }
 
-// TODO: add XTAL trim option
+#[non_exhaustive]
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RunConfig {
     pub channel: Channel,
+    pub prf: MeanPrf,
     pub preamble_code: PreambleCode,
     pub psr: Psr,
     pub sfd_type: SfdType,
@@ -355,10 +356,11 @@ pub struct RunConfig {
 }
 
 impl RunConfig {
-    pub const fn new(channel: Channel, preamble_code: PreambleCode) -> Self {
+    pub const fn new() -> Self {
         Self {
-            channel,
-            preamble_code,
+            channel: Channel::CH_9,
+            prf: MeanPrf::Mhz62,
+            preamble_code: PreambleCode::new(9).unwrap(),
             psr: Psr::Symbols64,
             sfd_type: SfdType::Sfd0,
             bit_rate: BitRate::Kbs850,
@@ -369,11 +371,18 @@ impl RunConfig {
     }
 }
 
+impl Default for RunConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConfigError {
     UnsupportedChannel(Channel),
     UnsupportedPrf(MeanPrf),
+    IncompatiblePreambleCode(PreambleCode, MeanPrf),
     UnsupportedPsr(Psr),
     UnsupportedSfd(SfdType),
     UnsupportedBitRate(BitRate),
@@ -382,7 +391,7 @@ pub enum ConfigError {
 }
 
 impl RunConfig {
-    pub const fn check_capabilities(&self, capabilities: Capabilities) -> Result<(), ConfigError> {
+    pub fn check_capabilities(&self, capabilities: Capabilities) -> Result<(), ConfigError> {
         if !capabilities.has_channel(self.channel) {
             return Err(ConfigError::UnsupportedChannel(self.channel));
         }
@@ -390,9 +399,14 @@ impl RunConfig {
             return Err(ConfigError::UnsupportedPsr(self.psr));
         }
 
-        let prf = self.preamble_code.prf();
-        if !capabilities.has_prf(prf) {
-            return Err(ConfigError::UnsupportedPrf(prf));
+        if !capabilities.has_prf(self.prf) {
+            return Err(ConfigError::UnsupportedPrf(self.prf));
+        }
+        if self.preamble_code.prf() != self.prf {
+            return Err(ConfigError::IncompatiblePreambleCode(
+                self.preamble_code,
+                self.prf,
+            ));
         }
         if !capabilities.has_sfd(self.sfd_type) {
             return Err(ConfigError::UnsupportedSfd(self.sfd_type));

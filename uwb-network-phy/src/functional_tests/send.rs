@@ -6,7 +6,6 @@ use heapless::Vec;
 const TX_DELAY: Duration = Duration::RSTU.mul_u32(1000);
 const RX_DELAY: Duration = Duration::RSTU.mul_u32(1000);
 const RX_TIMEOUT: Duration = Duration::RSTU.mul_u32(1_000_000);
-const PREAMBLE_CODE: phy::PreambleCode = phy::PreambleCode::new(9).unwrap();
 
 const MAX_PSDU_SIZE: usize = phy::MAX_PSDU_LENGTH as usize;
 
@@ -19,7 +18,8 @@ where
 {
     info!("Run as initiator");
 
-    let mut run_config = phy::RunConfig::new(channel, PREAMBLE_CODE);
+    let mut run_config = phy::RunConfig::new();
+    run_config.channel = channel;
     run_config.correct_tx_fcs = true;
 
     info!("Configure");
@@ -56,7 +56,8 @@ where
 
     info!("Configure");
 
-    let run_config = phy::RunConfig::new(channel, PREAMBLE_CODE);
+    let mut run_config = phy::RunConfig::new();
+    run_config.channel = channel;
 
     phy.start(run_config).await.unwrap();
 

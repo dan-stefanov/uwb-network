@@ -412,7 +412,6 @@ async fn check_dev_id<IF: Interface>(
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct RunData {
     config: phy::RunConfig,
-    preamble_prf: phy::MeanPrf,
     pac: PreambleAcquisitionChunk,
 }
 
@@ -486,6 +485,7 @@ impl TxPowerConfig {
     }
 }
 
+// TODO: add XTAL trim option
 #[non_exhaustive]
 pub struct DeviceConfig {
     pub tx_power: TxPowerConfig,
@@ -928,7 +928,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             .map_err(OpError::UnsupportedConfig)?;
 
         let channel = unwrap!(DevChannel::new(run_config.channel));
-        let preamble_prf = run_config.preamble_code.prf();
 
         let channel_config = ChannelConfig {
             channel,
@@ -940,7 +939,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         let pac = recommended_pac_length(run_config.psr);
         let base_config = RfConfig {
             channel,
-            prf: preamble_prf,
+            prf: run_config.prf,
             psr: run_config.psr,
             pac,
         };
@@ -979,7 +978,6 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
         self.state = InnerState::Running(RunData {
             config: run_config,
-            preamble_prf,
             pac,
         });
 
@@ -1066,8 +1064,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(Error::Operation(OpError::TxLengthLessThanFcs(length)));
         }
 
-        let shr_duration =
-            phy::shr_duration(run_data.preamble_prf, run_config.sfd_type, run_config.psr);
+        let shr_duration = phy::shr_duration(run_config.prf, run_config.sfd_type, run_config.psr);
         let rmarker_at = start_at + shr_duration;
 
         self.set_tx_config(
