@@ -4,7 +4,7 @@ use core::num::NonZeroU16;
 use interface::Interface;
 use ral::regs::{DgcCfgLutData, DgcLutData, EventsLow as Events};
 use ral::{RegisterAccess, regs};
-use uwb_network_phy::{self as phy, Error, OpError, time::CyclicTimestamp, time::Duration};
+use uwb_network_phy::{self as phy, Error, OpError, time::CyclicTimebase, time::Duration};
 
 // This mod MUST go first, so that the others see its macros.
 pub(crate) mod fmt;
@@ -20,7 +20,15 @@ const SYSTEM_TIME_UNIT: Duration = Duration::CHIP.mul_u32(4);
 // 31-bit system clock counter
 const SYSTEM_TIME_PERIOD: Duration = SYSTEM_TIME_UNIT.mul_u32(1u32 << 31);
 
-type Instant = phy::time::Instant<{ SYSTEM_TIME_PERIOD.as_ticks() }>;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Timebase;
+
+impl CyclicTimebase for Timebase {
+    const PERIOD: Duration = SYSTEM_TIME_PERIOD;
+}
+
+type Instant = phy::time::Instant<Timebase>;
 
 // The following duration are measured on host side, but we use the same
 // Duration type for simplicity
@@ -894,7 +902,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
 }
 
 impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
-    type Instant = Instant;
+    type Timebase = Timebase;
     type IoError = IF::Error;
     type DevError = DeviceError;
 
@@ -1093,10 +1101,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(OpError::StartInstantPassed(overtime).into());
         }
 
-        const _START_DELAY_MAX: Duration = Instant::PERIOD;
+        const _START_DELAY_MAX: Duration = Timebase::PERIOD;
         let start_delay = start_at - start_instant;
 
-        const _FRAME_DURATION_MAX: Duration = Instant::PERIOD; // significant exaggeration
+        const _FRAME_DURATION_MAX: Duration = Timebase::PERIOD; // significant exaggeration
         let frame_duration = shr_duration
             + phy::phr_duration(run_config.bit_rate)
             + phy::psdu_duration(run_config.bit_rate, length);
@@ -1128,7 +1136,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         start_at: Instant,
         max_preamble_hunt: Option<NonZeroU16>,
         rx_timeout: Duration,
-    ) -> Result<Option<phy::RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>> {
+    ) -> Result<Option<phy::RxReport<Timebase>>, Error<Self::IoError, Self::DevError>> {
         let InnerState::Running(run_data) = self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
@@ -1156,7 +1164,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
         self.interface.set_event_mask(RX_TERMINATION_EVENTS)?;
 
-        const _START_DELAY_MAX: Duration = Instant::PERIOD;
+        const _START_DELAY_MAX: Duration = Timebase::PERIOD;
         let start_delay = start_at - start_instant;
 
         const _EVENT_TIMEOUT_US_MAX: u64 = _START_DELAY_MAX

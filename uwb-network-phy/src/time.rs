@@ -228,17 +228,7 @@ impl ops::DivAssign<u32> for Duration {
     }
 }
 
-pub trait CyclicTimestamp:
-    ops::Add<Duration, Output = Self>
-    + ops::Sub<Duration, Output = Self>
-    + ops::Sub<Self, Output = Duration>
-    + ops::AddAssign<Duration>
-    + ops::SubAssign<Duration>
-    + Eq
-    + core::fmt::Debug
-    + Copy
-    + Sized
-{
+pub trait CyclicTimebase: Copy + Eq + core::fmt::Debug {
     const PERIOD: Duration;
 }
 
@@ -246,51 +236,86 @@ pub trait CyclicTimestamp:
 ///
 /// The unit is set to HRP Ranging counter time unit (RCTU), ~15.65 ps
 /// Value is given modulo device-specific timestamp period
-#[derive(Debug, PartialEq, Clone, Copy, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Instant<const PERIOD: u64>(u64);
-
-impl<const P: u64> CyclicTimestamp for Instant<P> {
-    const PERIOD: Duration = Duration::from_ticks(P);
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct Instant<T> {
+    ticks: u64,
+    timebase: core::marker::PhantomData<T>,
 }
 
-impl<const P: u64> Instant<P> {
-    const _ASSERT_NON_ZERO: u64 = P - 1;
+#[cfg(feature = "defmt")]
+impl<T> defmt::Format for Instant<T> {
+    fn format(&self, formatter: defmt::Formatter) {
+        defmt::write!(formatter, "Instant({})", self.ticks);
+    }
+}
+
+impl<T> core::fmt::Debug for Instant<T> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_tuple("Instant").field(&self.ticks).finish()
+    }
+}
+
+impl<T> Instant<T> {
+    const fn from_ticks_unchecked(ticks: u64) -> Self {
+        Self {
+            ticks,
+            timebase: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: CyclicTimebase> Instant<T> {
+    const _ASSERT_NON_ZERO: u64 = T::PERIOD.as_ticks() - 1;
+
+    pub const fn period(self) -> Duration {
+        T::PERIOD
+    }
 
     pub fn try_from_ticks(ticks: u64) -> Option<Self> {
-        if ticks < P { Some(Self(ticks)) } else { None }
+        if ticks < T::PERIOD.as_ticks() {
+            Some(Self::from_ticks_unchecked(ticks))
+        } else {
+            None
+        }
     }
 
     pub const fn as_ticks(self) -> u64 {
-        self.0
+        self.ticks
     }
 
     pub const fn add(self, duration: Duration) -> Self {
+        let period = T::PERIOD.as_ticks();
         let a = self.as_ticks();
-        let b = duration.as_ticks() % P;
+        let b = duration.as_ticks() % period;
 
-        let ticks = if a >= P - b { a - (P - b) } else { a + b };
-        Self(ticks)
+        let ticks = if a >= period - b {
+            a - (period - b)
+        } else {
+            a + b
+        };
+        Self::from_ticks_unchecked(ticks)
     }
 
     pub const fn sub_duration(self, duration: Duration) -> Self {
+        let period = T::PERIOD.as_ticks();
         let a = self.as_ticks();
-        let b = duration.as_ticks() % P;
+        let b = duration.as_ticks() % period;
 
-        let ticks = if a < b { a + (P - b) } else { a - b };
-        Self(ticks)
+        let ticks = if a < b { a + (period - b) } else { a - b };
+        Self::from_ticks_unchecked(ticks)
     }
 
-    pub const fn sub_instant(self, rhs: Instant<P>) -> Duration {
+    pub const fn sub_instant(self, rhs: Instant<T>) -> Duration {
+        let period = T::PERIOD.as_ticks();
         let a = self.as_ticks();
         let b = rhs.as_ticks();
 
-        let ticks = if a < b { a + (P - b) } else { a - b };
+        let ticks = if a < b { a + (period - b) } else { a - b };
         Duration::from_ticks(ticks)
     }
 }
 
-impl<const P: u64> ops::Add<Duration> for Instant<P> {
+impl<T: CyclicTimebase> ops::Add<Duration> for Instant<T> {
     type Output = Self;
 
     fn add(self, rhs: Duration) -> Self {
@@ -298,13 +323,13 @@ impl<const P: u64> ops::Add<Duration> for Instant<P> {
     }
 }
 
-impl<const P: u64> ops::AddAssign<Duration> for Instant<P> {
+impl<T: CyclicTimebase> ops::AddAssign<Duration> for Instant<T> {
     fn add_assign(&mut self, rhs: Duration) {
         *self = *self + rhs;
     }
 }
 
-impl<const P: u64> ops::Sub<Duration> for Instant<P> {
+impl<T: CyclicTimebase> ops::Sub<Duration> for Instant<T> {
     type Output = Self;
 
     fn sub(self, rhs: Duration) -> Self {
@@ -312,16 +337,16 @@ impl<const P: u64> ops::Sub<Duration> for Instant<P> {
     }
 }
 
-impl<const P: u64> ops::SubAssign<Duration> for Instant<P> {
+impl<T: CyclicTimebase> ops::SubAssign<Duration> for Instant<T> {
     fn sub_assign(&mut self, rhs: Duration) {
         *self = *self - rhs;
     }
 }
 
-impl<const P: u64> ops::Sub<Instant<P>> for Instant<P> {
+impl<T: CyclicTimebase> ops::Sub<Instant<T>> for Instant<T> {
     type Output = Duration;
 
-    fn sub(self, rhs: Instant<P>) -> Duration {
+    fn sub(self, rhs: Instant<T>) -> Duration {
         self.sub_instant(rhs)
     }
 }

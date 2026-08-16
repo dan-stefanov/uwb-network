@@ -428,7 +428,7 @@ impl RunConfig {
 pub struct RxReport<T> {
     pub length: u16,
     pub fcs_good: bool,
-    pub timestamp: T,
+    pub timestamp: time::Instant<T>,
 }
 
 #[derive(Debug)]
@@ -472,7 +472,7 @@ impl<IF, DEV> From<OpError> for Error<IF, DEV> {
 // All operation should run to completion
 #[allow(async_fn_in_trait)]
 pub trait Phy {
-    type Instant: time::CyclicTimestamp;
+    type Timebase: time::CyclicTimebase;
     type IoError: core::fmt::Debug;
     type DevError: core::fmt::Debug;
 
@@ -487,7 +487,7 @@ pub trait Phy {
 
     async fn get_timestamp(
         &mut self,
-    ) -> Result<Self::Instant, Error<Self::IoError, Self::DevError>>;
+    ) -> Result<time::Instant<Self::Timebase>, Error<Self::IoError, Self::DevError>>;
 
     async fn write_tx_buffer(
         &mut self,
@@ -504,7 +504,7 @@ pub trait Phy {
     /// `psdu_length` should include FCS field
     async fn transmit(
         &mut self,
-        start_at: Self::Instant,
+        start_at: time::Instant<Self::Timebase>,
         psdu_length: u16,
     ) -> Result<(), Error<Self::IoError, Self::DevError>>;
 
@@ -517,10 +517,10 @@ pub trait Phy {
     /// The value should not exceed the value returned by [`Phy::max_rx_timeout`].
     async fn receive(
         &mut self,
-        start_at: Self::Instant,
+        start_at: time::Instant<Self::Timebase>,
         max_preamble_hunt: Option<NonZeroU16>,
         timeout: time::Duration,
-    ) -> Result<Option<RxReport<Self::Instant>>, Error<Self::IoError, Self::DevError>>;
+    ) -> Result<Option<RxReport<Self::Timebase>>, Error<Self::IoError, Self::DevError>>;
 }
 
 // See IEEE 802.15.4-2020, Table 15-5

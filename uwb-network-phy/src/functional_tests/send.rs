@@ -12,7 +12,6 @@ const MAX_PSDU_SIZE: usize = phy::MAX_PSDU_LENGTH as usize;
 pub async fn initiator<PHY>(phy: &mut PHY, channel: phy::Channel)
 where
     PHY: phy::Phy,
-    PHY::Instant: defmt::Format,
     PHY::IoError: defmt::Format,
     PHY::DevError: defmt::Format,
 {
@@ -48,7 +47,6 @@ where
 pub async fn responder<PHY>(phy: &mut PHY, channel: phy::Channel)
 where
     PHY: phy::Phy,
-    PHY::Instant: defmt::Format,
     PHY::IoError: defmt::Format,
     PHY::DevError: defmt::Format,
 {
