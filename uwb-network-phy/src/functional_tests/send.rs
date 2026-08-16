@@ -36,7 +36,7 @@ where
     for _ in 0..100 {
         info!("Sent a packet");
 
-        let timestamp = phy.get_timestamp().await.unwrap();
+        let timestamp = phy.get_timestamp().await.unwrap().schedule_align_up();
         phy.transmit(timestamp + TX_DELAY, unwrap!(u16::try_from(psdu.len())))
             .await
             .unwrap();
@@ -64,7 +64,7 @@ where
 
         info!("Wait for a packet");
 
-        let timestamp = phy.get_timestamp().await.unwrap();
+        let timestamp = phy.get_timestamp().await.unwrap().schedule_align_up();
 
         let status = phy.receive(timestamp + RX_DELAY, None, RX_TIMEOUT).await;
 

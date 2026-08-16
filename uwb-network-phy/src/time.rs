@@ -229,7 +229,14 @@ impl ops::DivAssign<u32> for Duration {
 }
 
 pub trait CyclicTimebase: Copy + Eq + core::fmt::Debug {
+    /// Timestamp counter period.
     const PERIOD: Duration;
+
+    /// Smallest duration accepted when scheduling an operation.
+    ///
+    /// This value must be non-zero and divide both [`Self::PERIOD`] and
+    /// [`Duration::RSTU`] exactly.
+    const SCHEDULE_QUANT: Duration;
 }
 
 /// Represent a periodic time instant
@@ -255,17 +262,31 @@ impl<T> core::fmt::Debug for Instant<T> {
     }
 }
 
-impl<T> Instant<T> {
+impl<T: CyclicTimebase> Instant<T> {
+    const _ASSERT_VALID_TIMEBASE: () = {
+        let period = T::PERIOD.as_ticks();
+        let schedule_quant = T::SCHEDULE_QUANT.as_ticks();
+
+        core::assert!(period != 0, "timebase period must be non-zero");
+        core::assert!(schedule_quant != 0, "scheduling quantum must be non-zero");
+        core::assert!(
+            period % schedule_quant == 0,
+            "scheduling quantum must divide timebase period"
+        );
+        core::assert!(
+            Duration::RSTU.as_ticks() % schedule_quant == 0,
+            "scheduling quantum must divide RSTU"
+        );
+    };
+
     const fn from_ticks_unchecked(ticks: u64) -> Self {
+        let () = Self::_ASSERT_VALID_TIMEBASE;
+
         Self {
             ticks,
             timebase: core::marker::PhantomData,
         }
     }
-}
-
-impl<T: CyclicTimebase> Instant<T> {
-    const _ASSERT_NON_ZERO: u64 = T::PERIOD.as_ticks() - 1;
 
     pub const fn period(self) -> Duration {
         T::PERIOD
@@ -312,6 +333,27 @@ impl<T: CyclicTimebase> Instant<T> {
 
         let ticks = if a < b { a + (period - b) } else { a - b };
         Duration::from_ticks(ticks)
+    }
+
+    pub const fn is_schedule_aligned(self) -> bool {
+        self.ticks % T::SCHEDULE_QUANT.as_ticks() == 0
+    }
+
+    pub const fn schedule_align_down(self) -> Self {
+        let schedule_quant = T::SCHEDULE_QUANT.as_ticks();
+        let ticks = self.ticks - self.ticks % schedule_quant;
+        Self::from_ticks_unchecked(ticks)
+    }
+
+    pub const fn schedule_align_up(self) -> Self {
+        let schedule_quant = T::SCHEDULE_QUANT.as_ticks();
+        let remainder = self.ticks % schedule_quant;
+
+        if remainder == 0 {
+            self
+        } else {
+            self.add(Duration::from_ticks(schedule_quant - remainder))
+        }
     }
 }
 

@@ -26,9 +26,21 @@ pub struct Timebase;
 
 impl CyclicTimebase for Timebase {
     const PERIOD: Duration = SYSTEM_TIME_PERIOD;
+    const SCHEDULE_QUANT: Duration = SYSTEM_TIME_UNIT;
 }
 
 type Instant = phy::time::Instant<Timebase>;
+
+fn check_start_instant_alignment(start_at: Instant) -> Result<(), OpError> {
+    let aligned_start = start_at.schedule_align_down();
+    let offset = start_at - aligned_start;
+
+    if offset == Duration::ZERO {
+        Ok(())
+    } else {
+        Err(OpError::StartInstantNotAligned(offset))
+    }
+}
 
 // The following duration are measured on host side, but we use the same
 // Duration type for simplicity
@@ -1060,6 +1072,8 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         };
         let run_config = run_data.config;
 
+        check_start_instant_alignment(start_at)?;
+
         let max_psdu_length = max_psdu_length(run_config.long_frame_format);
         if length > max_psdu_length {
             return Err(Error::Operation(OpError::TxLengthAboveFrameFormat(
@@ -1142,6 +1156,8 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
                 self.state.into(),
             )));
         };
+
+        check_start_instant_alignment(start_at)?;
 
         if rx_timeout > MAX_RX_TIMEOUT {
             return Err(Error::Operation(OpError::ExcessiveRxTimeout(rx_timeout)));

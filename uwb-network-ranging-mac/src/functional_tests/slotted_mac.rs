@@ -86,7 +86,7 @@ where
         beacon_psdu.as_mut_slice()[5] = super_frame_ind;
         phy.write_tx_buffer(beacon_psdu.as_slice()).await.unwrap();
 
-        let now = phy.get_timestamp().await.unwrap();
+        let now = phy.get_timestamp().await.unwrap().schedule_align_up();
         let super_frame_start = now + TURNAROUND_DURATION;
 
         phy.transmit(
@@ -135,7 +135,7 @@ where
         let mut psdu = StaticPsdu::<MAX_PSDU_SIZE>::new();
 
         info!("Wait for a beacon");
-        let now = phy.get_timestamp().await.unwrap();
+        let now = phy.get_timestamp().await.unwrap().schedule_align_up();
 
         let max_rx_timeout = phy.max_rx_timeout();
         let status = phy
@@ -152,7 +152,7 @@ where
             phy.read_rx_buffer(psdu.as_mut_slice()).await.unwrap();
             display_beacon_report(status, psdu.as_slice());
 
-            let super_frame_start = report.timestamp - shr_duration;
+            let super_frame_start = (report.timestamp - shr_duration).schedule_align_up();
 
             for i in 1..SLOT_COUNT {
                 let status = phy

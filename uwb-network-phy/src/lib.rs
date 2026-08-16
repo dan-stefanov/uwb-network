@@ -437,6 +437,7 @@ pub enum OpError {
     ProhibitedInCurrentState(State),
     UnsupportedConfig(ConfigError),
     ExcessiveRxTimeout(time::Duration),
+    StartInstantNotAligned(time::Duration),
     StartInstantPassed(time::Duration),
     BufferAccessBeyondFrameFormat(usize, u16),
     TxLengthAboveFrameFormat(u16, u16),
@@ -501,6 +502,7 @@ pub trait Phy {
 
     /// Transmit a frame form buffer
     ///
+    /// `start_at` must be aligned to the schedule.
     /// `psdu_length` should include FCS field
     async fn transmit(
         &mut self,
@@ -510,6 +512,7 @@ pub trait Phy {
 
     /// Try to receive a frame
     ///
+    /// `start_at` must be aligned to the schedule.
     /// `max_preamble_hunt` is the minimum preamble hunting duration in symbols. Once it
     /// expires, the implementation may stop reception to save power.
     /// `timeout` define the total time to the frame reception. Once timeout is expired,
