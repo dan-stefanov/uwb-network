@@ -22,9 +22,11 @@ pub trait OtpRead {
 
     fn read_u8x28(&mut self, addr: u8) -> Result<[u8; 28], Self::Error> {
         let mut data = [0u8; 7 * 4];
-        for (offset, chunk) in (0..7u8).zip(data.chunks_exact_mut(4)) {
+        let (chunks, _) = data.as_chunks_mut::<4>();
+
+        for (offset, chunk) in (0u8..).zip(chunks) {
             let word = self.read_u32(addr + offset)?;
-            chunk.copy_from_slice(&word.to_le_bytes());
+            *chunk = word.to_le_bytes();
         }
         Ok(data)
     }
