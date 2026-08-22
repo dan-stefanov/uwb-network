@@ -24,23 +24,41 @@ impl CyclicTimebase for Timebase {
 
 pub type Instant = phy::time::Instant<Timebase>;
 
-const RESET_DELAY_US: u32 = 1_000;
-// initialization used to last 1200us
-const XTAL_WAKE_UP_TIMEOUT_US: u32 = 2_000;
-const PLL_LOCK_TIMEOUT_US: u32 = 150_000;
-const RX_CALIBRATION_TIMEOUT_US: u32 = 60_000;
-const RX_CALIBRATION_POLL_PERIOD_US: u32 = 20_000;
-
 const RX_FRAME_TIMEOUT_UNIT: Duration = Duration::CHIP.mul_u32(512);
 pub const MAX_RX_TIMEOUT: Duration = RX_FRAME_TIMEOUT_UNIT.mul_u32((1u32 << 20) - 1);
-const BUFFER_MAX_SIZE: usize = 1024;
-/// QORVO Register Identification Tag
-const DEV_RIDTAG: u16 = 0xdeca;
-/// DW3000 device
-const DEV_MODEL: u8 = 0x03;
-/// Non-PDoA device
-const DEV_VERSION: u8 = 0x0;
-const DEV_REVISION: u8 = 0x2;
+
+#[rustfmt::skip]
+static RX_TUNE_DGC_CFG: regs::DgcCfgLutData = [
+    0x40, 0x02, 0x00, 0x10,
+    0x89, 0xa4, 0x6d, 0x1b,
+    0x23, 0xc9, 0xb6, 0x2d,
+    0xb5, 0x6d, 0x20, 0x12,
+    0xda, 0xb6, 0x91, 0x24,
+    0x24, 0x49, 0xb6, 0x2d,
+    0x6d, 0xdb, 0x16, 0x00,
+];
+
+#[rustfmt::skip]
+static RX_TUNE_DGC_LUT_CH5: regs::DgcLutData = [
+    0xfd, 0xc0, 0x01, 0x00,
+    0x3e, 0xc4, 0x01, 0x00,
+    0xbe, 0xc6, 0x01, 0x00,
+    0x7e, 0xc7, 0x01, 0x00,
+    0x36, 0xcf, 0x01, 0x00,
+    0xb5, 0xcf, 0x01, 0x00,
+    0xf5, 0xcf, 0x01, 0x00,
+];
+
+#[rustfmt::skip]
+static RX_TUNE_DGC_LUT_CH9: ral::regs::DgcLutData = [
+    0xfe, 0xa8, 0x02, 0x00,
+    0x36, 0xac, 0x02, 0x00,
+    0xfe, 0xa5, 0x02, 0x00,
+    0x3e, 0xaf, 0x02, 0x00,
+    0x7d, 0xaf, 0x02, 0x00,
+    0xb5, 0xaf, 0x02, 0x00,
+    0xb5, 0xaf, 0x02, 0x00,
+];
 
 #[allow(dead_code)]
 #[repr(u8)]
@@ -86,52 +104,6 @@ pub enum FastCommand {
     ClrIrqs = 0x12,
     /// Toggle double buffer pointer
     DbToggle = 0x13,
-}
-
-#[rustfmt::skip]
-static RX_TUNE_DGC_CFG: regs::DgcCfgLutData = [
-    0x40, 0x02, 0x00, 0x10,
-    0x89, 0xa4, 0x6d, 0x1b,
-    0x23, 0xc9, 0xb6, 0x2d,
-    0xb5, 0x6d, 0x20, 0x12,
-    0xda, 0xb6, 0x91, 0x24,
-    0x24, 0x49, 0xb6, 0x2d,
-    0x6d, 0xdb, 0x16, 0x00,
-];
-
-#[rustfmt::skip]
-static RX_TUNE_DGC_LUT_CH5: regs::DgcLutData = [
-    0xfd, 0xc0, 0x01, 0x00,
-    0x3e, 0xc4, 0x01, 0x00,
-    0xbe, 0xc6, 0x01, 0x00,
-    0x7e, 0xc7, 0x01, 0x00,
-    0x36, 0xcf, 0x01, 0x00,
-    0xb5, 0xcf, 0x01, 0x00,
-    0xf5, 0xcf, 0x01, 0x00,
-];
-
-#[rustfmt::skip]
-static RX_TUNE_DGC_LUT_CH9: ral::regs::DgcLutData = [
-    0xfe, 0xa8, 0x02, 0x00,
-    0x36, 0xac, 0x02, 0x00,
-    0xfe, 0xa5, 0x02, 0x00,
-    0x3e, 0xaf, 0x02, 0x00,
-    0x7d, 0xaf, 0x02, 0x00,
-    0xb5, 0xaf, 0x02, 0x00,
-    0xb5, 0xaf, 0x02, 0x00,
-];
-
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum DeviceError {
-    ResetTimeout,
-    SpiNotReady,
-    WrongDevice,
-    PllLockTimeout,
-    RxCalibrationTimeout,
-    RxCalibrationFailure,
-    TxStateTimeout { timeout_us: u32 },
-    RxStateTimeout { timeout_us: u32 },
 }
 
 /// Subset of IEEE 802.15.4 HRP UWB channels supported by the DW3000.
@@ -189,17 +161,49 @@ pub fn recommended_pac_length(psr: phy::Psr) -> PreambleAcquisitionChunk {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum LowLevelError<IF: Interface> {
-    Interface(IF::Error),
-    Device(DeviceError),
+/// One TX_POWER gain setting.
+///
+/// The encoded byte uses bits 7:2 for the six-bit fine gain and bits 1:0 for
+/// the two-bit coarse gain.
+pub struct TxPower(u8);
+
+impl TxPower {
+    pub const fn new(coarse_gain: u8, fine_gain: u8) -> Self {
+        core::assert!(coarse_gain < 4);
+        core::assert!(fine_gain < 64);
+        Self((fine_gain << 2) | coarse_gain)
+    }
 }
 
-impl<IF: Interface> From<ral::Error<IF>> for LowLevelError<IF> {
-    fn from(value: ral::Error<IF>) -> Self {
-        match value {
-            ral::Error::Interface(err) => Self::Interface(err),
+impl Default for TxPower {
+    fn default() -> Self {
+        // TX_POWER POR value, DW3000 UM 8.2.2.21.1.
+        Self(0x82)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct TxPowerConfig {
+    /// Transmit power for the synchronization header.
+    pub shr: TxPower,
+    /// Transmit power for the PHY header.
+    pub phr: TxPower,
+    /// Transmit power for the PHY payload.
+    pub data: TxPower,
+    /// Transmit power for the Scrambled Timestamp Sequence.
+    pub sts: TxPower,
+}
+
+impl TxPowerConfig {
+    pub const fn new_uniform(power: TxPower) -> Self {
+        Self {
+            shr: power,
+            phr: power,
+            data: power,
+            sts: power,
         }
     }
 }
@@ -277,87 +281,37 @@ impl OtpData {
     }
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum DeviceError {
+    ResetTimeout,
+    SpiNotReady,
+    WrongDevice,
+    PllLockTimeout,
+    RxCalibrationTimeout,
+    RxCalibrationFailure,
+    TxStateTimeout { timeout_us: u32 },
+    RxStateTimeout { timeout_us: u32 },
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum LowLevelError<IF: Interface> {
+    Interface(IF::Error),
+    Device(DeviceError),
+}
+
+impl<IF: Interface> From<ral::Error<IF>> for LowLevelError<IF> {
+    fn from(value: ral::Error<IF>) -> Self {
+        match value {
+            ral::Error::Interface(err) => Self::Interface(err),
+        }
+    }
+}
+
 pub struct Device<IF> {
     interface: IF,
     otp: OtpData,
-}
-
-impl<IF: Interface> Device<IF> {
-    pub fn send_command(&mut self, command: FastCommand) -> Result<(), LowLevelError<IF>> {
-        self.interface
-            .send_command(command as u8)
-            .map_err(LowLevelError::Interface)
-    }
-
-    #[allow(dead_code)]
-    pub fn has_events(&mut self) -> Result<bool, LowLevelError<IF>> {
-        self.interface.is_irq().map_err(LowLevelError::Interface)
-    }
-
-    pub fn get_events(&mut self) -> Result<Events, LowLevelError<IF>> {
-        let mut ral = self.interface.ral();
-        let value = ral.sys_status_low().read_bytes()?;
-        Ok(Events::from_bits_truncate(value))
-    }
-
-    pub fn clear_events(&mut self, events: Events) -> Result<(), LowLevelError<IF>> {
-        let mut ral = self.interface.ral();
-        ral.sys_status_low().clear_bytes(events.bits())?;
-        Ok(())
-    }
-
-    pub fn clear_all_events(&mut self) -> Result<(), LowLevelError<IF>> {
-        self.send_command(FastCommand::ClrIrqs)?;
-        Ok(())
-    }
-
-    pub fn set_event_mask(&mut self, mask: Events) -> Result<(), LowLevelError<IF>> {
-        let mut ral = self.interface.ral();
-        ral.sys_enable_low().write_bytes(mask.bits())?;
-        Ok(())
-    }
-
-    pub async fn wait_for_events(&mut self, timeout_us: u32) -> Result<bool, LowLevelError<IF>> {
-        self.interface
-            .wait_for_irq(timeout_us)
-            .await
-            .map_err(LowLevelError::Interface)
-    }
-}
-
-async fn reset_power_up<IF: Interface>(interface: &mut IF) -> Result<(), LowLevelError<IF>> {
-    interface.set_reset().map_err(LowLevelError::Interface)?;
-    interface.delay_us(RESET_DELAY_US).await;
-    interface.clear_reset().map_err(LowLevelError::Interface)?;
-
-    // SPIRDY event is enabled by default
-    if !interface
-        .wait_for_irq(XTAL_WAKE_UP_TIMEOUT_US)
-        .await
-        .map_err(LowLevelError::Interface)?
-    {
-        return Err(LowLevelError::Device(DeviceError::ResetTimeout));
-    }
-
-    let mut ral = interface.ral();
-    let events = Events::from_bits_truncate(ral.sys_status_low().read_bytes()?);
-    if !events.contains(Events::SPIRDY) {
-        return Err(LowLevelError::Device(DeviceError::SpiNotReady));
-    }
-    Ok(())
-}
-
-async fn check_dev_id<IF: Interface>(interface: &mut IF) -> Result<(), LowLevelError<IF>> {
-    let mut ral = interface.ral();
-    let id = ral.dev_id().read()?;
-    if id.ridtag() != DEV_RIDTAG
-        || id.model() != DEV_MODEL
-        || id.ver() != DEV_VERSION
-        || id.rev() != DEV_REVISION
-    {
-        return Err(LowLevelError::Device(DeviceError::WrongDevice));
-    }
-    Ok(())
 }
 
 impl<IF: Interface> Device<IF> {
@@ -385,56 +339,7 @@ impl<IF: Interface> Device<IF> {
     pub fn shutdown(&mut self) -> Result<(), LowLevelError<IF>> {
         self.interface.set_reset().map_err(LowLevelError::Interface)
     }
-}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// One TX_POWER gain setting.
-///
-/// The encoded byte uses bits 7:2 for the six-bit fine gain and bits 1:0 for
-/// the two-bit coarse gain.
-pub struct TxPower(u8);
-
-impl TxPower {
-    pub const fn new(coarse_gain: u8, fine_gain: u8) -> Self {
-        core::assert!(coarse_gain < 4);
-        core::assert!(fine_gain < 64);
-        Self((fine_gain << 2) | coarse_gain)
-    }
-}
-
-impl Default for TxPower {
-    fn default() -> Self {
-        // TX_POWER POR value, DW3000 UM 8.2.2.21.1.
-        Self(0x82)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct TxPowerConfig {
-    /// Transmit power for the synchronization header.
-    pub shr: TxPower,
-    /// Transmit power for the PHY header.
-    pub phr: TxPower,
-    /// Transmit power for the PHY payload.
-    pub data: TxPower,
-    /// Transmit power for the Scrambled Timestamp Sequence.
-    pub sts: TxPower,
-}
-
-impl TxPowerConfig {
-    pub const fn new_uniform(power: TxPower) -> Self {
-        Self {
-            shr: power,
-            phr: power,
-            data: power,
-            sts: power,
-        }
-    }
-}
-
-impl<IF: Interface> Device<IF> {
     pub async fn configure(
         &mut self,
         run_config: phy::RunConfig,
@@ -485,19 +390,23 @@ impl<IF: Interface> Device<IF> {
         Ok(())
     }
 
-    pub fn write_tx_buffer(&mut self, psdu: &[u8]) -> Result<(), LowLevelError<IF>> {
-        assert!(psdu.len() <= BUFFER_MAX_SIZE);
-
+    fn set_channel(&mut self, config: ChannelConfig) -> Result<(), LowLevelError<IF>> {
         let mut ral = self.interface.ral();
-        ral.tx_buffer().write_fast(psdu)?;
-        Ok(())
-    }
-
-    pub fn read_rx_buffer(&mut self, psdu: &mut [u8]) -> Result<(), LowLevelError<IF>> {
-        assert!(psdu.len() <= BUFFER_MAX_SIZE);
-
-        let mut ral = self.interface.ral();
-        ral.rx_buffer0().read_fast(psdu)?;
+        ral.chan_ctrl().write(|w| {
+            w.set_rf_chan(match config.channel {
+                DevChannel::Ch5 => regs::Channel::Channel5,
+                DevChannel::Ch9 => regs::Channel::Channel9,
+            });
+            w.set_sfd_type(match config.sfd_type {
+                phy::SfdType::Sfd0 => regs::SfdType::IeeeSfd0,
+                phy::SfdType::Sfd2 => regs::SfdType::IeeeSfd2,
+                phy::SfdType::Sfd1 | phy::SfdType::Sfd3 | phy::SfdType::Sfd4 => {
+                    core::unreachable!()
+                }
+            });
+            w.set_tx_pcode(config.tx_code);
+            w.set_rx_pcode(config.rx_code);
+        })?;
         Ok(())
     }
 
@@ -541,6 +450,8 @@ impl<IF: Interface> Device<IF> {
 
     // TODO: accept lock_code
     async fn start_pll(&mut self, channel: DevChannel) -> Result<(), LowLevelError<IF>> {
+        const PLL_LOCK_TIMEOUT_US: u32 = 150_000;
+
         let mut ral = self.interface.ral();
         ral.pll_cfg().write_bytes(match channel {
             DevChannel::Ch5 => 0x1F3C,
@@ -645,6 +556,8 @@ impl<IF: Interface> Device<IF> {
     }
 
     async fn calibrate_rx(&mut self) -> Result<(), LowLevelError<IF>> {
+        const RX_CALIBRATION_POLL_PERIOD_US: u32 = 20_000;
+        const RX_CALIBRATION_TIMEOUT_US: u32 = 60_000;
         use regs::CalStatus;
         let mut ral = self.interface.ral();
 
@@ -705,23 +618,22 @@ impl<IF: Interface> Device<IF> {
         Ok(())
     }
 
-    fn set_channel(&mut self, config: ChannelConfig) -> Result<(), LowLevelError<IF>> {
+    fn set_sfd_timeout(
+        &mut self,
+        pac: PreambleAcquisitionChunk,
+        sfd_type: phy::SfdType,
+        max_psr: phy::Psr,
+    ) -> Result<(), LowLevelError<IF>> {
+        // UserManual discourage disabling timeout
+        // DW3000 UM, 8.2.7.2
+        let max_psr = max_psr.as_symbols();
+        let pac_size = pac.as_symbols();
+        let sfd_length = sfd_type.as_symbols();
+        let symbols = max_psr.max(pac_size) - pac_size + sfd_length + 1;
+
         let mut ral = self.interface.ral();
-        ral.chan_ctrl().write(|w| {
-            w.set_rf_chan(match config.channel {
-                DevChannel::Ch5 => regs::Channel::Channel5,
-                DevChannel::Ch9 => regs::Channel::Channel9,
-            });
-            w.set_sfd_type(match config.sfd_type {
-                phy::SfdType::Sfd0 => regs::SfdType::IeeeSfd0,
-                phy::SfdType::Sfd2 => regs::SfdType::IeeeSfd2,
-                phy::SfdType::Sfd1 | phy::SfdType::Sfd3 | phy::SfdType::Sfd4 => {
-                    core::unreachable!()
-                }
-            });
-            w.set_tx_pcode(config.tx_code);
-            w.set_rx_pcode(config.rx_code);
-        })?;
+        assert_ne!(symbols, 0);
+        ral.rx_sfd_toc().write_bytes(symbols)?;
         Ok(())
     }
 
@@ -764,17 +676,6 @@ impl<IF: Interface> Device<IF> {
         Ok(())
     }
 
-    // In unlucky case, device can stuck in TX state without neither HPDWARN nor TXFRS events
-    // Check user manual 9.4.1 (p.240)
-    pub fn is_tx_missed_deadline_state(&mut self) -> Result<bool, LowLevelError<IF>> {
-        let mut ral = self.interface.ral();
-        let state = ral.sys_state().read()?;
-
-        const PMSC_TX: u8 = 0xd; // Particular TX state
-        const TX_IDLE: u8 = 0x0;
-        Ok(state.pmsc_state() == PMSC_TX && state.tx_state() == TX_IDLE)
-    }
-
     pub fn set_preamble_timeout(
         &mut self,
         pac: PreambleAcquisitionChunk,
@@ -797,51 +698,6 @@ impl<IF: Interface> Device<IF> {
         Ok(())
     }
 
-    fn set_sfd_timeout(
-        &mut self,
-        pac: PreambleAcquisitionChunk,
-        sfd_type: phy::SfdType,
-        max_psr: phy::Psr,
-    ) -> Result<(), LowLevelError<IF>> {
-        // UserManual discourage disabling timeout
-        // DW3000 UM, 8.2.7.2
-        let max_psr = max_psr.as_symbols();
-        let pac_size = pac.as_symbols();
-        let sfd_length = sfd_type.as_symbols();
-        let symbols = max_psr.max(pac_size) - pac_size + sfd_length + 1;
-
-        let mut ral = self.interface.ral();
-        assert_ne!(symbols, 0);
-        ral.rx_sfd_toc().write_bytes(symbols)?;
-        Ok(())
-    }
-
-    pub fn set_dx_time(&mut self, time: Instant) -> Result<(), LowLevelError<IF>> {
-        let mut ral = self.interface.ral();
-        let sys_ticks_x2 = unwrap!(u32::try_from(
-            time.as_ticks() / SYSTEM_TIME_UNIT.as_ticks() * 2
-        ));
-        ral.dx_time().write_bytes(sys_ticks_x2)?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn set_dref_time(&mut self, time: Instant) -> Result<(), LowLevelError<IF>> {
-        let mut ral = self.interface.ral();
-        let sys_ticks_x2 = unwrap!(u32::try_from(
-            time.as_ticks() / SYSTEM_TIME_UNIT.as_ticks() * 2
-        ));
-        ral.dref_time().write_bytes(sys_ticks_x2)?;
-        Ok(())
-    }
-
-    pub fn get_rx_frame_length(&mut self) -> Result<u16, LowLevelError<IF>> {
-        let mut ral = self.interface.ral();
-        let rx_info = ral.rx_finfo_short().read()?;
-
-        Ok(rx_info.rxflen())
-    }
-
     pub fn get_sys_timestamp(&mut self) -> Result<Instant, LowLevelError<IF>> {
         let mut ral = self.interface.ral();
 
@@ -855,10 +711,82 @@ impl<IF: Interface> Device<IF> {
         )))
     }
 
-    pub fn get_fine_rx_timestamp(&mut self) -> Result<Instant, LowLevelError<IF>> {
+    pub fn set_dx_time(&mut self, time: Instant) -> Result<(), LowLevelError<IF>> {
         let mut ral = self.interface.ral();
-        let rx_time = ral.rx_time().read_bytes()?;
-        Ok(unwrap!(Instant::try_from_ticks(rx_time)))
+        let sys_ticks_x2 = unwrap!(u32::try_from(
+            time.as_ticks() / SYSTEM_TIME_UNIT.as_ticks() * 2
+        ));
+        ral.dx_time().write_bytes(sys_ticks_x2)?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn set_dref_time(&mut self, time: Instant) -> Result<(), LowLevelError<IF>> {
+        let mut ral = self.interface.ral();
+        let sys_ticks_x2 = unwrap!(u32::try_from(
+            time.as_ticks() / SYSTEM_TIME_UNIT.as_ticks() * 2
+        ));
+        ral.dref_time().write_bytes(sys_ticks_x2)?;
+        Ok(())
+    }
+
+    pub fn send_command(&mut self, command: FastCommand) -> Result<(), LowLevelError<IF>> {
+        self.interface
+            .send_command(command as u8)
+            .map_err(LowLevelError::Interface)
+    }
+
+    pub fn set_event_mask(&mut self, mask: Events) -> Result<(), LowLevelError<IF>> {
+        let mut ral = self.interface.ral();
+        ral.sys_enable_low().write_bytes(mask.bits())?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn has_events(&mut self) -> Result<bool, LowLevelError<IF>> {
+        self.interface.is_irq().map_err(LowLevelError::Interface)
+    }
+
+    pub async fn wait_for_events(&mut self, timeout_us: u32) -> Result<bool, LowLevelError<IF>> {
+        self.interface
+            .wait_for_irq(timeout_us)
+            .await
+            .map_err(LowLevelError::Interface)
+    }
+
+    pub fn get_events(&mut self) -> Result<Events, LowLevelError<IF>> {
+        let mut ral = self.interface.ral();
+        let value = ral.sys_status_low().read_bytes()?;
+        Ok(Events::from_bits_truncate(value))
+    }
+
+    pub fn clear_events(&mut self, events: Events) -> Result<(), LowLevelError<IF>> {
+        let mut ral = self.interface.ral();
+        ral.sys_status_low().clear_bytes(events.bits())?;
+        Ok(())
+    }
+
+    pub fn clear_all_events(&mut self) -> Result<(), LowLevelError<IF>> {
+        self.send_command(FastCommand::ClrIrqs)?;
+        Ok(())
+    }
+
+    // In unlucky case, device can stuck in TX state without neither HPDWARN nor TXFRS events
+    // Check user manual 9.4.1 (p.240)
+    pub fn is_tx_missed_deadline_state(&mut self) -> Result<bool, LowLevelError<IF>> {
+        let mut ral = self.interface.ral();
+        let state = ral.sys_state().read()?;
+
+        const PMSC_TX: u8 = 0xd; // Particular TX state
+        const TX_IDLE: u8 = 0x0;
+        Ok(state.pmsc_state() == PMSC_TX && state.tx_state() == TX_IDLE)
+    }
+
+    pub fn get_rx_frame_length(&mut self) -> Result<u16, LowLevelError<IF>> {
+        let mut ral = self.interface.ral();
+        let rx_info = ral.rx_finfo_short().read()?;
+
+        Ok(rx_info.rxflen())
     }
 
     pub fn get_coarse_rx_timestamp(&mut self) -> Result<Instant, LowLevelError<IF>> {
@@ -868,4 +796,76 @@ impl<IF: Interface> Device<IF> {
             (SYSTEM_TIME_UNIT * (sys_ticks_x2 / 2)).as_ticks()
         )))
     }
+
+    pub fn get_fine_rx_timestamp(&mut self) -> Result<Instant, LowLevelError<IF>> {
+        let mut ral = self.interface.ral();
+        let rx_time = ral.rx_time().read_bytes()?;
+        Ok(unwrap!(Instant::try_from_ticks(rx_time)))
+    }
+
+    pub fn read_rx_buffer(&mut self, psdu: &mut [u8]) -> Result<(), LowLevelError<IF>> {
+        const RX_BUFFER_MAX_SIZE: usize = 1024;
+        assert!(psdu.len() <= RX_BUFFER_MAX_SIZE);
+
+        let mut ral = self.interface.ral();
+        ral.rx_buffer0().read_fast(psdu)?;
+        Ok(())
+    }
+
+    pub fn write_tx_buffer(&mut self, psdu: &[u8]) -> Result<(), LowLevelError<IF>> {
+        const TX_BUFFER_MAX_SIZE: usize = 1024;
+        assert!(psdu.len() <= TX_BUFFER_MAX_SIZE);
+
+        let mut ral = self.interface.ral();
+        ral.tx_buffer().write_fast(psdu)?;
+        Ok(())
+    }
+}
+
+async fn reset_power_up<IF: Interface>(interface: &mut IF) -> Result<(), LowLevelError<IF>> {
+    const RESET_DELAY_US: u32 = 1_000;
+
+    interface.set_reset().map_err(LowLevelError::Interface)?;
+    interface.delay_us(RESET_DELAY_US).await;
+    interface.clear_reset().map_err(LowLevelError::Interface)?;
+
+    // initialization used to last 1200us
+    const XTAL_WAKE_UP_TIMEOUT_US: u32 = 2_000;
+
+    // SPIRDY event is enabled by default
+    if !interface
+        .wait_for_irq(XTAL_WAKE_UP_TIMEOUT_US)
+        .await
+        .map_err(LowLevelError::Interface)?
+    {
+        return Err(LowLevelError::Device(DeviceError::ResetTimeout));
+    }
+
+    let mut ral = interface.ral();
+    let events = Events::from_bits_truncate(ral.sys_status_low().read_bytes()?);
+    if !events.contains(Events::SPIRDY) {
+        return Err(LowLevelError::Device(DeviceError::SpiNotReady));
+    }
+    Ok(())
+}
+
+async fn check_dev_id<IF: Interface>(interface: &mut IF) -> Result<(), LowLevelError<IF>> {
+    /// QORVO Register Identification Tag
+    const DEV_RIDTAG: u16 = 0xdeca;
+    /// DW3000 device
+    const DEV_MODEL: u8 = 0x03;
+    /// Non-PDoA device
+    const DEV_VERSION: u8 = 0x0;
+    const DEV_REVISION: u8 = 0x2;
+
+    let mut ral = interface.ral();
+    let id = ral.dev_id().read()?;
+    if id.ridtag() != DEV_RIDTAG
+        || id.model() != DEV_MODEL
+        || id.ver() != DEV_VERSION
+        || id.rev() != DEV_REVISION
+    {
+        return Err(LowLevelError::Device(DeviceError::WrongDevice));
+    }
+    Ok(())
 }
