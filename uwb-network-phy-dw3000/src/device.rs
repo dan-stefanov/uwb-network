@@ -1,11 +1,10 @@
 use crate::interface::Interface;
 use crate::otp;
-use crate::phy;
-pub use crate::ral::regs::{Channel, EventsLow as Events, FrameFormat, PacSize, SfdType};
+use crate::phy::{self, time::Duration};
 use crate::ral::{self, RegisterAccess, regs};
 use core::num::NonZeroU16;
-use phy::time::Duration;
-use uwb_network_phy::time::CyclicTimebase;
+
+pub use regs::{Channel, EventsLow as Events, FrameFormat, PacSize, SfdType};
 
 // 124.8 MHZ system clock period
 const SYSTEM_TIME_UNIT: Duration = Duration::CHIP.mul_u32(4);
@@ -16,7 +15,7 @@ const SYSTEM_TIME_PERIOD: Duration = SYSTEM_TIME_UNIT.mul_u32(1u32 << 31);
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Timebase;
 
-impl CyclicTimebase for Timebase {
+impl phy::time::CyclicTimebase for Timebase {
     const PERIOD: Duration = SYSTEM_TIME_PERIOD;
     const SCHEDULE_QUANT: Duration = SYSTEM_TIME_UNIT;
 }

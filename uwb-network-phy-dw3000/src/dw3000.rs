@@ -3,6 +3,8 @@ use crate::interface::Interface;
 use crate::phy::{self, Error, OpError, time::CyclicTimebase, time::Duration};
 use core::num::NonZeroU16;
 
+pub use device::Error as InitError;
+
 fn check_start_instant_alignment(start_at: Instant) -> Result<(), OpError> {
     let aligned_start = start_at.schedule_align_down();
     let offset = start_at - aligned_start;
@@ -106,10 +108,7 @@ pub struct Dw3000Phy<IF> {
 }
 
 impl<IF: Interface> Dw3000Phy<IF> {
-    pub async fn init(
-        interface: IF,
-        dev_config: DeviceConfig,
-    ) -> Result<Self, Error<IF::Error, DeviceError>> {
+    pub async fn init(interface: IF, dev_config: DeviceConfig) -> Result<Self, InitError<IF>> {
         Ok(Self {
             device: device::Device::init(interface).await?,
             dev_config,
