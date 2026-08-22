@@ -192,32 +192,6 @@ trait RalInterface: Interface {
 
 impl<IF: Interface> RalInterface for IF {}
 
-struct OtpReader<'a, IF> {
-    interface: &'a mut IF,
-}
-
-impl<'a, IF: Interface> OtpReader<'a, IF> {
-    fn new(interface: &'a mut IF) -> Self {
-        Self { interface }
-    }
-}
-
-impl<'a, IF: Interface> otp::OtpRead for OtpReader<'a, IF> {
-    type Error = Error<IF>;
-    fn read_u32(&mut self, addr: u8) -> Result<u32, Error<IF>> {
-        let mut ral = self.interface.ral();
-        // set manual access mode
-        ral.otp_cfg().write(|w| w.set_otp_man(true))?;
-        // set the address
-        ral.otp_addr().write(|w| w.set_otp_addr(addr as u16))?;
-        // assert the read strobe
-        ral.otp_cfg().write(|w| w.set_otp_read(true))?;
-        // read the result
-        let res = ral.otp_rdata().read_bytes()?;
-        Ok(res)
-    }
-}
-
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
@@ -244,7 +218,8 @@ struct OtpData {
 }
 
 impl OtpData {
-    fn load<R: otp::OtpRead>(mut otp: R) -> Result<Self, R::Error> {
+    fn load<IF: Interface>(interface: &mut IF) -> Result<Self, Error<IF>> {
+        let mut otp = otp::OtpReader::new(interface);
         Ok(Self {
             ldotune_cal_set: otp.ldotune_cal()? != 0,
             xtal_trim: otp.xtal_trim()?,
@@ -293,7 +268,7 @@ impl<IF: Interface> Device<IF> {
         let mut interface = interface;
         reset_power_up(&mut interface).await?;
         check_dev_id(&mut interface).await?;
-        let otp = OtpData::load(OtpReader::new(&mut interface))?;
+        let otp = OtpData::load(&mut interface)?;
         interface.set_reset().map_err(Error::Interface)?;
 
         Ok(Self { interface, otp })
