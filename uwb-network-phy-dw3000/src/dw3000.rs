@@ -53,11 +53,11 @@ fn max_psdu_length(long_frame_format: bool) -> u16 {
     }
 }
 
-impl<IF: Interface> From<device::LowLevelError<IF>> for Error<IF::Error, DeviceError> {
-    fn from(value: device::LowLevelError<IF>) -> Self {
+impl<IF: Interface> From<device::Error<IF>> for Error<IF::Error, DeviceError> {
+    fn from(value: device::Error<IF>) -> Self {
         match value {
-            device::LowLevelError::Interface(err) => Self::Interface(err),
-            device::LowLevelError::Device(err) => Self::Device(err),
+            device::Error::Interface(err) => Self::Interface(err),
+            device::Error::Device(err) => Self::Device(err),
         }
     }
 }
