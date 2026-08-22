@@ -270,11 +270,11 @@ impl<T: CyclicTimebase> Instant<T> {
         core::assert!(period != 0, "timebase period must be non-zero");
         core::assert!(schedule_quant != 0, "scheduling quantum must be non-zero");
         core::assert!(
-            period % schedule_quant == 0,
+            period.is_multiple_of(schedule_quant),
             "scheduling quantum must divide timebase period"
         );
         core::assert!(
-            Duration::RSTU.as_ticks() % schedule_quant == 0,
+            Duration::RSTU.as_ticks().is_multiple_of(schedule_quant),
             "scheduling quantum must divide RSTU"
         );
     };
@@ -336,7 +336,7 @@ impl<T: CyclicTimebase> Instant<T> {
     }
 
     pub const fn is_schedule_aligned(self) -> bool {
-        self.ticks % T::SCHEDULE_QUANT.as_ticks() == 0
+        self.ticks.is_multiple_of(T::SCHEDULE_QUANT.as_ticks())
     }
 
     pub const fn schedule_align_down(self) -> Self {
