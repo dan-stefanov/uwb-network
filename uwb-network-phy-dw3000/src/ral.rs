@@ -7,6 +7,7 @@ use crate::interface::{FileId, FullAddress, Interface};
 #[allow(dead_code)]
 pub mod regs;
 
+// TODO: Replace with interface error
 pub enum Error<IF: Interface> {
     Interface(IF::Error),
 }
