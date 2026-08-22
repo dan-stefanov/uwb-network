@@ -53,6 +53,7 @@ const RX_CALIBRATION_POLL_PERIOD_US: u32 = 20_000;
 
 const RX_FRAME_TIMEOUT_UNIT: Duration = Duration::CHIP.mul_u32(512);
 const MAX_RX_TIMEOUT: Duration = RX_FRAME_TIMEOUT_UNIT.mul_u32((1u32 << 20) - 1);
+const BUFFER_MAX_SIZE: usize = 1024;
 
 const CAPABILITIES: phy::Capabilities = phy::Capabilities::CH_5
     .union(phy::Capabilities::CH_9)
@@ -247,13 +248,40 @@ fn max_psdu_length(long_frame_format: bool) -> u16 {
     }
 }
 
-impl<IF: Interface> From<ral::Error<IF>> for Error<IF::Error, DeviceError> {
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum LowLevelError<IF: Interface> {
+    Interface(IF::Error),
+    Device(DeviceError),
+}
+
+impl<IF: Interface> From<ral::Error<IF>> for LowLevelError<IF> {
     fn from(value: ral::Error<IF>) -> Self {
         match value {
-            ral::Error::Interface(err) => Error::Interface(err),
+            ral::Error::Interface(err) => Self::Interface(err),
         }
     }
 }
+
+impl<IF: Interface> From<LowLevelError<IF>> for Error<IF::Error, DeviceError> {
+    fn from(value: LowLevelError<IF>) -> Self {
+        match value {
+            LowLevelError::Interface(err) => Self::Interface(err),
+            LowLevelError::Device(err) => Self::Device(err),
+        }
+    }
+}
+
+trait RalInterface: Interface {
+    fn ral(&mut self) -> RegisterAccess<'_, Self>
+    where
+        Self: Sized,
+    {
+        RegisterAccess::new(self)
+    }
+}
+
+impl<IF: Interface> RalInterface for IF {}
 
 struct OtpReader<'a, IF> {
     interface: &'a mut IF,
@@ -266,9 +294,9 @@ impl<'a, IF: Interface> OtpReader<'a, IF> {
 }
 
 impl<'a, IF: Interface> otp::OtpRead for OtpReader<'a, IF> {
-    type Error = Error<IF::Error, DeviceError>;
-    fn read_u32(&mut self, addr: u8) -> Result<u32, Error<IF::Error, DeviceError>> {
-        let mut ral = RegisterAccess::new(self.interface);
+    type Error = LowLevelError<IF>;
+    fn read_u32(&mut self, addr: u8) -> Result<u32, LowLevelError<IF>> {
+        let mut ral = self.interface.ral();
         // set manual access mode
         ral.otp_cfg().write(|w| w.set_otp_man(true))?;
         // set the address
@@ -325,105 +353,85 @@ const RX_TERMINATION_EVENTS: Events = Events::RXPHE
     .union(Events::RXSTO)
     .union(Events::ARFE);
 
-struct InterfaceWrapper<IF>(IF);
+struct Device<IF> {
+    interface: IF,
+    otp: OtpData,
+}
 
-impl<IF: Interface> InterfaceWrapper<IF> {
-    fn set_reset(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
-        self.0.set_reset().map_err(Error::Interface)
-    }
-    fn clear_reset(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
-        self.0.clear_reset().map_err(Error::Interface)
-    }
-
-    #[allow(dead_code)]
-    fn wake_up(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
-        self.0.wake_up().map_err(Error::Interface)
-    }
-
-    fn send_command(&mut self, command: FastCommand) -> Result<(), Error<IF::Error, DeviceError>> {
-        self.0.send_command(command as u8).map_err(Error::Interface)
-    }
-
-    fn ral(&mut self) -> RegisterAccess<'_, IF> {
-        RegisterAccess::new(&mut self.0)
-    }
-
-    fn otp(&mut self) -> OtpReader<'_, IF> {
-        OtpReader::new(&mut self.0)
+impl<IF: Interface> Device<IF> {
+    fn send_command(&mut self, command: FastCommand) -> Result<(), LowLevelError<IF>> {
+        self.interface
+            .send_command(command as u8)
+            .map_err(LowLevelError::Interface)
     }
 
     #[allow(dead_code)]
-    fn has_events(&mut self) -> Result<bool, Error<IF::Error, DeviceError>> {
-        self.0.is_irq().map_err(Error::Interface)
+    fn has_events(&mut self) -> Result<bool, LowLevelError<IF>> {
+        self.interface.is_irq().map_err(LowLevelError::Interface)
     }
 
-    async fn delay_us(&mut self, delay_us: u32) {
-        self.0.delay_us(delay_us).await;
-    }
-
-    fn get_events(&mut self) -> Result<Events, Error<IF::Error, DeviceError>> {
-        let mut ral = self.ral();
+    fn get_events(&mut self) -> Result<Events, LowLevelError<IF>> {
+        let mut ral = self.interface.ral();
         let value = ral.sys_status_low().read_bytes()?;
         Ok(Events::from_bits_truncate(value))
     }
 
-    fn clear_events(&mut self, events: Events) -> Result<(), Error<IF::Error, DeviceError>> {
-        let mut ral = self.ral();
+    fn clear_events(&mut self, events: Events) -> Result<(), LowLevelError<IF>> {
+        let mut ral = self.interface.ral();
         ral.sys_status_low().clear_bytes(events.bits())?;
         Ok(())
     }
 
-    fn clear_all_events(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
+    fn clear_all_events(&mut self) -> Result<(), LowLevelError<IF>> {
         self.send_command(FastCommand::ClrIrqs)?;
         Ok(())
     }
 
-    fn set_event_mask(&mut self, mask: Events) -> Result<(), Error<IF::Error, DeviceError>> {
-        let mut ral = self.ral();
+    fn set_event_mask(&mut self, mask: Events) -> Result<(), LowLevelError<IF>> {
+        let mut ral = self.interface.ral();
         ral.sys_enable_low().write_bytes(mask.bits())?;
         Ok(())
     }
 
-    async fn wait_for_events(
-        &mut self,
-        timeout_us: u32,
-    ) -> Result<bool, Error<IF::Error, DeviceError>> {
-        self.0
+    async fn wait_for_events(&mut self, timeout_us: u32) -> Result<bool, LowLevelError<IF>> {
+        self.interface
             .wait_for_irq(timeout_us)
             .await
-            .map_err(Error::Interface)
+            .map_err(LowLevelError::Interface)
     }
 }
 
-async fn reset_power_up<IF: Interface>(
-    interface: &mut InterfaceWrapper<IF>,
-) -> Result<(), Error<IF::Error, DeviceError>> {
-    interface.set_reset()?;
+async fn reset_power_up<IF: Interface>(interface: &mut IF) -> Result<(), LowLevelError<IF>> {
+    interface.set_reset().map_err(LowLevelError::Interface)?;
     interface.delay_us(RESET_DELAY_US).await;
-    interface.clear_reset()?;
+    interface.clear_reset().map_err(LowLevelError::Interface)?;
 
     // SPIRDY event is enabled by default
-    if !interface.wait_for_events(XTAL_WAKE_UP_TIMEOUT_US).await? {
-        return Err(Error::Device(DeviceError::ResetTimeout));
+    if !interface
+        .wait_for_irq(XTAL_WAKE_UP_TIMEOUT_US)
+        .await
+        .map_err(LowLevelError::Interface)?
+    {
+        return Err(LowLevelError::Device(DeviceError::ResetTimeout));
     }
 
-    let events = interface.get_events()?;
+    let mut ral = interface.ral();
+    let events = Events::from_bits_truncate(ral.sys_status_low().read_bytes()?);
     if !events.contains(Events::SPIRDY) {
-        return Err(Error::Device(DeviceError::SpiNotReady));
+        return Err(LowLevelError::Device(DeviceError::SpiNotReady));
     }
     Ok(())
 }
 
-async fn check_dev_id<IF: Interface>(
-    interface: &mut InterfaceWrapper<IF>,
-) -> Result<(), Error<IF::Error, DeviceError>> {
-    let id = interface.ral().dev_id().read()?;
+async fn check_dev_id<IF: Interface>(interface: &mut IF) -> Result<(), LowLevelError<IF>> {
+    let mut ral = interface.ral();
+    let id = ral.dev_id().read()?;
     if id.ridtag() != DEV_RIDTAG
         || id.model() != DEV_MODEL
         || id.ver() != DEV_VERSION
         || id.rev() != DEV_REVISION
     {
-        return Err(Error::Device(DeviceError::WrongDevice));
+        return Err(LowLevelError::Device(DeviceError::WrongDevice));
     }
     Ok(())
 }
@@ -451,9 +459,35 @@ impl From<InnerState> for phy::State {
     }
 }
 
+impl<IF: Interface> Device<IF> {
+    async fn init(interface: IF) -> Result<Self, LowLevelError<IF>> {
+        let mut interface = interface;
+        reset_power_up(&mut interface).await?;
+        check_dev_id(&mut interface).await?;
+        let otp = OtpData::load(OtpReader::new(&mut interface))?;
+        interface.set_reset().map_err(LowLevelError::Interface)?;
+
+        Ok(Self { interface, otp })
+    }
+
+    async fn reset_power_up(&mut self) -> Result<(), LowLevelError<IF>> {
+        reset_power_up(&mut self.interface).await?;
+
+        // set_event_mask operates with low 4 bytes only
+        // Disable the higher mask
+        // TODO: Add explicit access to higher event mask
+        let mut ral = self.interface.ral();
+        ral.sys_enable_high().write_bytes(0)?;
+        Ok(())
+    }
+
+    fn shutdown(&mut self) -> Result<(), LowLevelError<IF>> {
+        self.interface.set_reset().map_err(LowLevelError::Interface)
+    }
+}
+
 pub struct Dw3000Phy<IF> {
-    interface: InterfaceWrapper<IF>,
-    otp: OtpData,
+    device: Device<IF>,
     dev_config: DeviceConfig,
     state: InnerState,
 }
@@ -524,25 +558,82 @@ impl<IF: Interface> Dw3000Phy<IF> {
         interface: IF,
         dev_config: DeviceConfig,
     ) -> Result<Self, Error<IF::Error, DeviceError>> {
-        let mut interface = InterfaceWrapper(interface);
-        reset_power_up(&mut interface).await?;
-        check_dev_id(&mut interface).await?;
-        let otp = OtpData::load(interface.otp())?;
-        interface.set_reset()?;
-
         Ok(Self {
-            interface,
-            otp,
+            device: Device::init(interface).await?,
             dev_config,
             state: InnerState::Stopped,
         })
     }
+}
 
-    fn shutdown(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
-        self.interface.set_reset()
+impl<IF: Interface> Device<IF> {
+    async fn configure(
+        &mut self,
+        run_config: phy::RunConfig,
+        dev_config: &DeviceConfig,
+        pac: PreambleAcquisitionChunk,
+    ) -> Result<(), LowLevelError<IF>> {
+        let channel = unwrap!(DevChannel::new(run_config.channel));
+        let channel_config = ChannelConfig {
+            channel,
+            sfd_type: run_config.sfd_type,
+            rx_code: run_config.rx_preamble_code,
+            tx_code: run_config.tx_preamble_code,
+        };
+
+        let base_config = RfConfig {
+            channel,
+            prf: run_config.prf,
+            psr: run_config.psr,
+            pac,
+        };
+
+        self.reset_power_up().await?;
+        self.set_channel(channel_config)?;
+        self.configure_ldo()?;
+        self.configure_bias()?;
+        self.configure_xtal_trim()?;
+        self.start_pll(base_config.channel).await?;
+        self.configure_rf(base_config, dev_config)?;
+        self.calibrate_rx().await?;
+        self.set_sfd_timeout(pac, run_config.sfd_type, run_config.psr)?;
+
+        let mut ral = self.interface.ral();
+        ral.sys_cfg().write(|w| {
+            w.set_dis_fcs_tx(!run_config.correct_tx_fcs);
+            w.set_phr_mode(if run_config.long_frame_format {
+                regs::PhrMode::LongFrame
+            } else {
+                regs::PhrMode::StandardFrame
+            });
+            w.set_phr_6m8(run_config.bit_rate == phy::BitRate::Kbs6810Only);
+            w.set_cia_ipatov(run_config.ranging);
+            w.set_cia_sts(false);
+            w.set_rxwtoe(true); // Receive Wait Timeout Enable
+            w.set_cp_spc(regs::StsPocketPosition::NoSts);
+            w.set_fast_aat(false); // RXFR waits for CIADONE or CIAERR
+        })?;
+
+        Ok(())
     }
 
-    fn configure_ldo(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
+    fn write_tx_buffer(&mut self, psdu: &[u8]) -> Result<(), LowLevelError<IF>> {
+        assert!(psdu.len() <= BUFFER_MAX_SIZE);
+
+        let mut ral = self.interface.ral();
+        ral.tx_buffer().write_fast(psdu)?;
+        Ok(())
+    }
+
+    fn read_rx_buffer(&mut self, psdu: &mut [u8]) -> Result<(), LowLevelError<IF>> {
+        assert!(psdu.len() <= BUFFER_MAX_SIZE);
+
+        let mut ral = self.interface.ral();
+        ral.rx_buffer0().read_fast(psdu)?;
+        Ok(())
+    }
+
+    fn configure_ldo(&mut self) -> Result<(), LowLevelError<IF>> {
         let mut ral = self.interface.ral();
         if self.otp.ldotune_cal_set {
             // Unprogrammed (zero) value can permanently damage the device
@@ -553,7 +644,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(())
     }
 
-    fn configure_bias(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
+    fn configure_bias(&mut self) -> Result<(), LowLevelError<IF>> {
         if self.otp.bias_tune_byte2 != 0 {
             let mut ral = self.interface.ral();
             ral.otp_cfg().write(|w| w.set_bias_kick(true))?;
@@ -567,7 +658,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(())
     }
 
-    fn configure_xtal_trim(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
+    fn configure_xtal_trim(&mut self) -> Result<(), LowLevelError<IF>> {
         const DEFAULT_TRIM_VALUE: u8 = 0x2E;
         let trim_value = if self.otp.xtal_trim != 0 {
             self.otp.xtal_trim
@@ -581,10 +672,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
     }
 
     // TODO: accept lock_code
-    async fn start_pll(
-        &mut self,
-        channel: DevChannel,
-    ) -> Result<(), Error<IF::Error, DeviceError>> {
+    async fn start_pll(&mut self, channel: DevChannel) -> Result<(), LowLevelError<IF>> {
         let mut ral = self.interface.ral();
         ral.pll_cfg().write_bytes(match channel {
             DevChannel::Ch5 => 0x1F3C,
@@ -592,30 +680,34 @@ impl<IF: Interface> Dw3000Phy<IF> {
         })?;
 
         // Note, user manual prescribes such logic, however API skips it
-        let lock_code = self.otp.pll_lock_code;
-        if lock_code != 0 {
-            ral.pll_cc().modify(|w| w.set_code(lock_code))?;
+        if self.otp.pll_lock_code != 0 {
+            ral.pll_cc()
+                .modify(|w| w.set_code(self.otp.pll_lock_code))?;
         }
 
         ral.pll_cal().write(|w| {
             w.set_pll_cfg_ld(0x8);
-            w.set_use_old(lock_code != 0);
+            w.set_use_old(self.otp.pll_lock_code != 0);
         })?;
 
         // Allow switch to IDLE
-        self.interface.clear_events(Events::CPLOCK)?;
+        self.clear_events(Events::CPLOCK)?;
 
         let mut ral = self.interface.ral();
         ral.seq_ctrl().modify(|w| w.set_ainit2idle(true))?;
 
-        self.interface.set_event_mask(Events::CPLOCK)?;
-        if !self.interface.wait_for_events(PLL_LOCK_TIMEOUT_US).await? {
-            return Err(Error::Device(DeviceError::PllLockTimeout));
+        self.set_event_mask(Events::CPLOCK)?;
+        if !self.wait_for_events(PLL_LOCK_TIMEOUT_US).await? {
+            return Err(LowLevelError::Device(DeviceError::PllLockTimeout));
         }
         Ok(())
     }
 
-    fn configure_rf(&mut self, config: RfConfig) -> Result<(), Error<IF::Error, DeviceError>> {
+    fn configure_rf(
+        &mut self,
+        config: RfConfig,
+        dev_config: &DeviceConfig,
+    ) -> Result<(), LowLevelError<IF>> {
         let mut ral = self.interface.ral();
         if self.otp.rx_tune_set {
             ral.otp_cfg().write(|w| {
@@ -675,16 +767,16 @@ impl<IF: Interface> Dw3000Phy<IF> {
             DevChannel::Ch9 => 0x1C010034,
         })?;
         ral.tx_power().write(|w| {
-            w.set_data_pwr(self.dev_config.tx_power.data.0);
-            w.set_phr_pwr(self.dev_config.tx_power.phr.0);
-            w.set_shr_pwr(self.dev_config.tx_power.shr.0);
-            w.set_sts_pwr(self.dev_config.tx_power.sts.0);
+            w.set_data_pwr(dev_config.tx_power.data.0);
+            w.set_phr_pwr(dev_config.tx_power.phr.0);
+            w.set_shr_pwr(dev_config.tx_power.shr.0);
+            w.set_sts_pwr(dev_config.tx_power.sts.0);
         })?;
 
         Ok(())
     }
 
-    async fn calibrate_rx(&mut self) -> Result<(), Error<IF::Error, DeviceError>> {
+    async fn calibrate_rx(&mut self) -> Result<(), LowLevelError<IF>> {
         use regs::CalStatus;
         let mut ral = self.interface.ral();
 
@@ -734,18 +826,18 @@ impl<IF: Interface> Dw3000Phy<IF> {
         ral.ldo_ctrl().write_value(ldo_ctrl_orig)?;
 
         if !status.contains(CalStatus::CAL_DONE) {
-            return Err(Error::Device(DeviceError::RxCalibrationTimeout));
+            return Err(LowLevelError::Device(DeviceError::RxCalibrationTimeout));
         }
 
         const FAILURE_MARKER: u32 = 0x1fff_ffff;
         if resi == FAILURE_MARKER || resq == FAILURE_MARKER {
-            return Err(Error::Device(DeviceError::RxCalibrationFailure));
+            return Err(LowLevelError::Device(DeviceError::RxCalibrationFailure));
         }
 
         Ok(())
     }
 
-    fn set_channel(&mut self, config: ChannelConfig) -> Result<(), Error<IF::Error, DeviceError>> {
+    fn set_channel(&mut self, config: ChannelConfig) -> Result<(), LowLevelError<IF>> {
         let mut ral = self.interface.ral();
         ral.chan_ctrl().write(|w| {
             w.set_rf_chan(match config.channel {
@@ -771,7 +863,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         bit_rate: phy::BitRate,
         ranging: bool,
         length: u16,
-    ) -> Result<(), Error<IF::Error, DeviceError>> {
+    ) -> Result<(), LowLevelError<IF>> {
         const MAX_FRAME_LENGTH: u16 = 1023;
         assert!(length <= MAX_FRAME_LENGTH);
 
@@ -806,7 +898,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
 
     // In unlucky case, device can stuck in TX state without neither HPDWARN nor TXFRS events
     // Check user manual 9.4.1 (p.240)
-    fn is_tx_missed_deadline_state(&mut self) -> Result<bool, Error<IF::Error, DeviceError>> {
+    fn is_tx_missed_deadline_state(&mut self) -> Result<bool, LowLevelError<IF>> {
         let mut ral = self.interface.ral();
         let state = ral.sys_state().read()?;
 
@@ -819,17 +911,14 @@ impl<IF: Interface> Dw3000Phy<IF> {
         &mut self,
         pac: PreambleAcquisitionChunk,
         timeout: Option<NonZeroU16>,
-    ) -> Result<(), Error<IF::Error, DeviceError>> {
+    ) -> Result<(), LowLevelError<IF>> {
         let preamble_toc = timeout.map_or(0, |count| u16::from(count).div_ceil(pac.as_symbols()));
         let mut ral = self.interface.ral();
         ral.pre_toc().write_bytes(preamble_toc)?;
         Ok(())
     }
 
-    fn set_rx_frame_timeout(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<(), Error<IF::Error, DeviceError>> {
+    fn set_rx_frame_timeout(&mut self, timeout: Duration) -> Result<(), LowLevelError<IF>> {
         assert!(timeout <= MAX_RX_TIMEOUT);
         const UNIT: Duration = RX_FRAME_TIMEOUT_UNIT;
         let counter = timeout.as_ticks().div_ceil(UNIT.as_ticks());
@@ -845,7 +934,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         pac: PreambleAcquisitionChunk,
         sfd_type: phy::SfdType,
         max_psr: phy::Psr,
-    ) -> Result<(), Error<IF::Error, DeviceError>> {
+    ) -> Result<(), LowLevelError<IF>> {
         // UserManual discourage disabling timeout
         // DW3000 UM, 8.2.7.2
         let max_psr = max_psr.as_symbols();
@@ -859,7 +948,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(())
     }
 
-    fn set_dx_time(&mut self, time: Instant) -> Result<(), Error<IF::Error, DeviceError>> {
+    fn set_dx_time(&mut self, time: Instant) -> Result<(), LowLevelError<IF>> {
         let mut ral = self.interface.ral();
         let sys_ticks_x2 = unwrap!(u32::try_from(
             time.as_ticks() / SYSTEM_TIME_UNIT.as_ticks() * 2
@@ -869,7 +958,7 @@ impl<IF: Interface> Dw3000Phy<IF> {
     }
 
     #[allow(dead_code)]
-    fn set_dref_time(&mut self, time: Instant) -> Result<(), Error<IF::Error, DeviceError>> {
+    fn set_dref_time(&mut self, time: Instant) -> Result<(), LowLevelError<IF>> {
         let mut ral = self.interface.ral();
         let sys_ticks_x2 = unwrap!(u32::try_from(
             time.as_ticks() / SYSTEM_TIME_UNIT.as_ticks() * 2
@@ -878,14 +967,14 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(())
     }
 
-    fn get_rx_frame_length(&mut self) -> Result<u16, Error<IF::Error, DeviceError>> {
+    fn get_rx_frame_length(&mut self) -> Result<u16, LowLevelError<IF>> {
         let mut ral = self.interface.ral();
         let rx_info = ral.rx_finfo_short().read()?;
 
         Ok(rx_info.rxflen())
     }
 
-    fn get_sys_timestamp(&mut self) -> Result<Instant, Error<IF::Error, DeviceError>> {
+    fn get_sys_timestamp(&mut self) -> Result<Instant, LowLevelError<IF>> {
         let mut ral = self.interface.ral();
 
         // Sys_time is latch during read (and probably some other operations)
@@ -898,13 +987,13 @@ impl<IF: Interface> Dw3000Phy<IF> {
         )))
     }
 
-    fn get_fine_rx_timestamp(&mut self) -> Result<Instant, Error<IF::Error, DeviceError>> {
+    fn get_fine_rx_timestamp(&mut self) -> Result<Instant, LowLevelError<IF>> {
         let mut ral = self.interface.ral();
         let rx_time = ral.rx_time().read_bytes()?;
         Ok(unwrap!(Instant::try_from_ticks(rx_time)))
     }
 
-    fn get_coarse_rx_timestamp(&mut self) -> Result<Instant, Error<IF::Error, DeviceError>> {
+    fn get_coarse_rx_timestamp(&mut self) -> Result<Instant, LowLevelError<IF>> {
         let mut ral = self.interface.ral();
         let sys_ticks_x2 = ral.rx_rawst().read_bytes()?;
         Ok(unwrap!(Instant::try_from_ticks(
@@ -932,7 +1021,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
     // TODO: go to sleep instead of shutdown
     async fn stop(&mut self) -> Result<(), Error<Self::IoError, Self::DevError>> {
-        self.shutdown()?;
+        self.device.shutdown()?;
         self.state = InnerState::Stopped;
         Ok(())
     }
@@ -947,54 +1036,12 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             .check_capabilities(self.capabilities())
             .map_err(OpError::UnsupportedConfig)?;
 
-        let channel = unwrap!(DevChannel::new(run_config.channel));
-
-        let channel_config = ChannelConfig {
-            channel,
-            sfd_type: run_config.sfd_type,
-            rx_code: run_config.rx_preamble_code,
-            tx_code: run_config.tx_preamble_code,
-        };
-
         let pac = recommended_pac_length(run_config.psr);
-        let base_config = RfConfig {
-            channel,
-            prf: run_config.prf,
-            psr: run_config.psr,
-            pac,
-        };
+        self.device
+            .configure(run_config, &self.dev_config, pac)
+            .await?;
 
-        reset_power_up(&mut self.interface).await?;
-
-        let mut ral = self.interface.ral();
-        ral.sys_enable_high().write_bytes(0)?;
-
-        self.set_channel(channel_config)?;
-        self.configure_ldo()?;
-        self.configure_bias()?;
-        self.configure_xtal_trim()?;
-        self.start_pll(base_config.channel).await?;
-        self.configure_rf(base_config)?;
-        self.calibrate_rx().await?;
-        self.set_sfd_timeout(pac, run_config.sfd_type, run_config.psr)?;
-
-        let mut ral = self.interface.ral();
-        ral.sys_cfg().write(|w| {
-            w.set_dis_fcs_tx(!run_config.correct_tx_fcs);
-            w.set_phr_mode(if run_config.long_frame_format {
-                regs::PhrMode::LongFrame
-            } else {
-                regs::PhrMode::StandardFrame
-            });
-            w.set_phr_6m8(run_config.bit_rate == phy::BitRate::Kbs6810Only);
-            w.set_cia_ipatov(run_config.ranging);
-            w.set_cia_sts(false);
-            w.set_rxwtoe(true); // Receive Wait Timeout Enable
-            w.set_cp_spc(regs::StsPocketPosition::NoSts);
-            w.set_fast_aat(false); // RXFR waits for CIADONE or CIAERR
-        })?;
-
-        self.interface.clear_all_events()?;
+        self.device.clear_all_events()?;
 
         self.state = InnerState::Running(RunData {
             config: run_config,
@@ -1011,7 +1058,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             )));
         }
 
-        self.get_sys_timestamp()
+        Ok(self.device.get_sys_timestamp()?)
     }
 
     async fn write_tx_buffer(
@@ -1032,8 +1079,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             )));
         }
 
-        let mut ral = self.interface.ral();
-        ral.tx_buffer().write_fast(psdu)?;
+        self.device.write_tx_buffer(psdu)?;
         Ok(())
     }
 
@@ -1055,8 +1101,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             )));
         }
 
-        let mut ral = self.interface.ral();
-        ral.rx_buffer0().read_fast(psdu)?;
+        self.device.read_rx_buffer(psdu)?;
         Ok(())
     }
 
@@ -1089,29 +1134,29 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         let shr_duration = phy::shr_duration(run_config.prf, run_config.sfd_type, run_config.psr);
         let rmarker_at = start_at + shr_duration;
 
-        self.set_tx_config(
+        self.device.set_tx_config(
             run_config.psr,
             run_config.bit_rate,
             run_config.ranging,
             length,
         )?;
-        self.set_dx_time(rmarker_at)?;
+        self.device.set_dx_time(rmarker_at)?;
 
-        self.interface.send_command(FastCommand::Dtx)?;
-        let start_instant = self.get_sys_timestamp()?;
+        self.device.send_command(FastCommand::Dtx)?;
+        let start_instant = self.device.get_sys_timestamp()?;
         let overtime = start_instant - start_at;
 
-        let imm_events = self.interface.get_events()?;
+        let imm_events = self.device.get_events()?;
         if imm_events.contains(Events::HPDWARN) {
-            self.interface.send_command(FastCommand::Txrxoff)?;
-            self.interface.clear_all_events()?;
+            self.device.send_command(FastCommand::Txrxoff)?;
+            self.device.clear_all_events()?;
             return Err(OpError::StartInstantPassed(overtime).into());
         }
 
-        let bug_state = self.is_tx_missed_deadline_state()?;
+        let bug_state = self.device.is_tx_missed_deadline_state()?;
         if bug_state {
-            self.interface.send_command(FastCommand::Txrxoff)?;
-            self.interface.clear_all_events()?;
+            self.device.send_command(FastCommand::Txrxoff)?;
+            self.device.clear_all_events()?;
             return Err(OpError::StartInstantPassed(overtime).into());
         }
 
@@ -1131,16 +1176,16 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         const _ASSERT: u64 = u32::MAX as u64 - _EVENT_TIMEOUT_US_MAX;
         let event_timeout_us = unwrap!(u32::try_from(event_timeout_us));
 
-        self.interface.set_event_mask(Events::TXFRS)?;
-        if !self.interface.wait_for_events(event_timeout_us).await? {
-            self.interface.send_command(FastCommand::Txrxoff)?;
-            self.interface.clear_all_events()?;
+        self.device.set_event_mask(Events::TXFRS)?;
+        if !self.device.wait_for_events(event_timeout_us).await? {
+            self.device.send_command(FastCommand::Txrxoff)?;
+            self.device.clear_all_events()?;
             return Err(Error::Device(DeviceError::TxStateTimeout {
                 timeout_us: event_timeout_us,
             }));
         }
 
-        self.interface.clear_all_events()?;
+        self.device.clear_all_events()?;
 
         Ok(())
     }
@@ -1163,22 +1208,23 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(Error::Operation(OpError::ExcessiveRxTimeout(rx_timeout)));
         }
 
-        self.set_preamble_timeout(run_data.pac, max_preamble_hunt)?;
-        self.set_dx_time(start_at)?;
-        self.set_rx_frame_timeout(rx_timeout)?;
+        self.device
+            .set_preamble_timeout(run_data.pac, max_preamble_hunt)?;
+        self.device.set_dx_time(start_at)?;
+        self.device.set_rx_frame_timeout(rx_timeout)?;
 
-        self.interface.send_command(FastCommand::Drx)?;
-        let start_instant = self.get_sys_timestamp()?;
+        self.device.send_command(FastCommand::Drx)?;
+        let start_instant = self.device.get_sys_timestamp()?;
         let overtime = start_instant - start_at;
 
-        let imm_events = self.interface.get_events()?;
+        let imm_events = self.device.get_events()?;
         if imm_events.contains(Events::HPDWARN) {
-            self.interface.send_command(FastCommand::Txrxoff)?;
-            self.interface.clear_all_events()?;
+            self.device.send_command(FastCommand::Txrxoff)?;
+            self.device.clear_all_events()?;
             return Err(OpError::StartInstantPassed(overtime).into());
         }
 
-        self.interface.set_event_mask(RX_TERMINATION_EVENTS)?;
+        self.device.set_event_mask(RX_TERMINATION_EVENTS)?;
 
         const _START_DELAY_MAX: Duration = Timebase::PERIOD;
         let start_delay = start_at - start_instant;
@@ -1191,15 +1237,15 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         const _ASSERT: u64 = u32::MAX as u64 - _EVENT_TIMEOUT_US_MAX;
         let event_timeout_us = unwrap!(u32::try_from(event_timeout_us));
 
-        if !self.interface.wait_for_events(event_timeout_us).await? {
-            self.interface.send_command(FastCommand::Txrxoff)?;
-            self.interface.clear_all_events()?;
+        if !self.device.wait_for_events(event_timeout_us).await? {
+            self.device.send_command(FastCommand::Txrxoff)?;
+            self.device.clear_all_events()?;
             return Err(Error::Device(DeviceError::RxStateTimeout {
                 timeout_us: event_timeout_us,
             }));
         }
-        let events = self.interface.get_events()?;
-        self.interface.clear_all_events()?;
+        let events = self.device.get_events()?;
+        self.device.clear_all_events()?;
 
         // TODO: Add RX error signalling
         if !events.contains(Events::RXFR) {
@@ -1210,11 +1256,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Ok(None);
         }
 
-        let frame_length = self.get_rx_frame_length()?;
+        let frame_length = self.device.get_rx_frame_length()?;
         let timestamp = if run_data.config.ranging {
-            self.get_fine_rx_timestamp()?
+            self.device.get_fine_rx_timestamp()?
         } else {
-            self.get_coarse_rx_timestamp()?
+            self.device.get_coarse_rx_timestamp()?
         };
 
         Ok(Some(phy::RxReport {
