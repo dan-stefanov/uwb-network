@@ -4,12 +4,13 @@ use bitflags::bitflags;
 
 
 #[repr(u8)]
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub enum PhrMode {
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FrameFormat {
     /// Standard Frame mode as per IEEE802.15.4 standard
-    StandardFrame = 0x0,
+    Standard = 0x0,
     /// Long Frame mode encoding as per IEEE802.15.8 standard
-    LongFrame = 0x1,
+    Long = 0x1,
 }
 
 #[repr(u8)]
@@ -47,14 +48,16 @@ pub enum ReceiverParameterSet {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Channel {
-    Channel5 = 0x0,
-    Channel9 = 0x1,
+    Ch5 = 0x0,
+    Ch9 = 0x1,
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SfdType {
     IeeeSfd0 = 0,
     Decawave8 = 1,
@@ -112,12 +115,18 @@ pub enum RxPsr {
     Symbols4096 = 0b11,
 }
 
+/// Preamble acquisition chunk size.
 #[repr(u8)]
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub enum Pac {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum PacSize {
+    /// For preamble length 64 or more.
     Symbols8 = 0,
+    /// For preamble length 128 or more.
     Symbols16 = 1,
+    /// For preamble length 256 or more (undocumented).
     Symbols32 = 2,
+    /// For preamble length 32.
     Symbols4 = 3,
 }
 
@@ -384,7 +393,7 @@ field_bool!(SysCfg, 0, ffen, "Frame Filtering Enable");
 field_bool!(SysCfg, 1, dis_fcs_tx, "Disable auto-FCS Transmission");
 field_bool!(SysCfg, 2, dis_fce, "Disable frame check error handling");
 field_bool!(SysCfg, 3, dis_drxb, "Disable Double RX Buffer");
-field_enum!(SysCfg, 4, 5, phr_mode, u8, PhrMode, "PHR mode");
+field_enum!(SysCfg, 4, 5, phr_mode, u8, FrameFormat, "PHR mode");
 field_bool!(SysCfg, 5, phr_6m8, "6.81 Mb/s data for PHR");
 field_bool!(SysCfg, 6, spi_crcen, "Enable SPI CRC functionality");
 field_bool!(SysCfg, 7, cia_ipatov, "Select CIA processing of the preamble CIR");
@@ -468,7 +477,7 @@ field_prim!(RxCalResi, 0, 29, resi, u32, "Calibration result I");
 
 field_prim!(RxCalResq, 0, 29, resq, u32, "Calibration result Q");
 
-field_enum!(Dtune0, 0, 2, pac, u8, Pac, "Preamble acquisition chunk size");
+field_enum!(Dtune0, 0, 2, pac, u8, PacSize, "Preamble acquisition chunk size");
 // bits 2-3 - reserved
 field_bool!(Dtune0, 4, dt0b4, "Undocumented bit");
 

@@ -1,9 +1,6 @@
-use crate::device::{
-    self, DeviceError, FastCommand, Instant, PreambleAcquisitionChunk, Timebase, TxPowerConfig,
-};
+use crate::device::{self, DeviceError, Events, FastCommand, Instant, Timebase};
 use crate::interface::Interface;
 use crate::phy::{self, Error, OpError, time::CyclicTimebase, time::Duration};
-use crate::ral::regs::EventsLow as Events;
 use core::num::NonZeroU16;
 
 fn check_start_instant_alignment(start_at: Instant) -> Result<(), OpError> {
@@ -70,11 +67,20 @@ const RX_TERMINATION_EVENTS: Events = Events::RXPHE
     .union(Events::RXSTO)
     .union(Events::ARFE);
 
+// TODO: add XTAL trim option
+#[non_exhaustive]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct DeviceConfig {
+    pub tx_power: device::TxPowerConfig,
+}
+
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct RunData {
     config: phy::RunConfig,
-    pac: PreambleAcquisitionChunk,
+    bit_rate: device::BitRate,
+    pac_size: device::PacSize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -97,20 +103,6 @@ pub struct Dw3000Phy<IF> {
     device: device::Device<IF>,
     dev_config: DeviceConfig,
     state: InnerState,
-}
-
-// TODO: add XTAL trim option
-#[non_exhaustive]
-pub struct DeviceConfig {
-    pub tx_power: TxPowerConfig,
-}
-
-impl Default for DeviceConfig {
-    fn default() -> Self {
-        Self {
-            tx_power: TxPowerConfig::default(),
-        }
-    }
 }
 
 impl<IF: Interface> Dw3000Phy<IF> {
@@ -160,16 +152,50 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             .check_capabilities(self.capabilities())
             .map_err(OpError::UnsupportedConfig)?;
 
-        let pac = device::recommended_pac_length(run_config.psr);
-        self.device
-            .configure(run_config, &self.dev_config, pac)
-            .await?;
+        let pac_size = device::recommended_pac_size(run_config.psr);
+        let bit_rate = match run_config.bit_rate {
+            phy::BitRate::Kbs850 => device::BitRate::Kbs850,
+            phy::BitRate::Kbs6810 => device::BitRate::Kbs6810,
+            phy::BitRate::Kbs6810Only => device::BitRate::Kbs6810Only,
+            bit_rate => unreachable!("unexpected bit rate: {:?}", bit_rate),
+        };
+        let config = device::Config {
+            channel: match run_config.channel {
+                phy::Channel::CH_5 => device::Channel::Ch5,
+                phy::Channel::CH_9 => device::Channel::Ch9,
+                channel => unreachable!("unexpected channel: {:?}", channel),
+            },
+            prf: match run_config.prf {
+                phy::MeanPrf::Mhz16 => device::MeanPrf::Mhz16,
+                phy::MeanPrf::Mhz62 => device::MeanPrf::Mhz62,
+                prf => unreachable!("unexpected PRF: {:?}", prf),
+            },
+            rx_code: run_config.rx_preamble_code,
+            tx_code: run_config.tx_preamble_code,
+            rx_psr: run_config.psr,
+            pac_size,
+            sfd_type: match run_config.sfd_type {
+                phy::SfdType::Sfd0 => device::SfdType::IeeeSfd0,
+                phy::SfdType::Sfd2 => device::SfdType::IeeeSfd2,
+                sfd_type => unreachable!("unexpected SFD type: {:?}", sfd_type),
+            },
+            cia_enable: run_config.ranging,
+            bit_rate,
+            frame_format: match run_config.long_frame_format {
+                true => device::FrameFormat::Long,
+                false => device::FrameFormat::Standard,
+            },
+            correct_tx_fcs: run_config.correct_tx_fcs,
+            tx_power: self.dev_config.tx_power,
+        };
+        self.device.configure(config).await?;
 
         self.device.clear_all_events()?;
 
         self.state = InnerState::Running(RunData {
             config: run_config,
-            pac,
+            bit_rate,
+            pac_size,
         });
 
         Ok(())
@@ -260,7 +286,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
         self.device.set_tx_config(
             run_config.psr,
-            run_config.bit_rate,
+            run_data.bit_rate,
             run_config.ranging,
             length,
         )?;
@@ -333,7 +359,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         }
 
         self.device
-            .set_preamble_timeout(run_data.pac, max_preamble_hunt)?;
+            .set_preamble_timeout(run_data.pac_size, max_preamble_hunt)?;
         self.device.set_dx_time(start_at)?;
         self.device.set_rx_frame_timeout(rx_timeout)?;
 

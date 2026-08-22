@@ -1,8 +1,7 @@
-use crate::dw3000::DeviceConfig;
 use crate::interface::Interface;
 use crate::otp;
 use crate::phy;
-use crate::ral::regs::EventsLow as Events;
+pub use crate::ral::regs::{Channel, EventsLow as Events, FrameFormat, PacSize, SfdType};
 use crate::ral::{self, RegisterAccess, regs};
 use core::num::NonZeroU16;
 use phy::time::Duration;
@@ -106,59 +105,33 @@ pub enum FastCommand {
     DbToggle = 0x13,
 }
 
-/// Subset of IEEE 802.15.4 HRP UWB channels supported by the DW3000.
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum DevChannel {
-    Ch5,
-    Ch9,
+pub enum MeanPrf {
+    /// 31-symbols preambles, CHIP_FREQ / 16
+    Mhz16,
+    /// 127-symbols preambles, CHIP_FREQ / 4
+    Mhz62,
 }
 
-impl DevChannel {
-    fn new(channel: phy::Channel) -> Option<Self> {
-        match channel {
-            phy::Channel::CH_5 => Some(Self::Ch5),
-            phy::Channel::CH_9 => Some(Self::Ch9),
-            _ => None,
-        }
-    }
-}
-
-/// DW3000 preamble acquisition chunk size.
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum PreambleAcquisitionChunk {
-    /// For preamble length 32.
-    Symbols4,
-    /// For preamble length 64 or more.
-    Symbols8,
-    /// For preamble length 128 or more.
-    Symbols16,
-    #[allow(dead_code)]
-    /// For preamble length 256 or more (undocumented).
-    Symbols32,
-}
-
-impl PreambleAcquisitionChunk {
-    pub const fn as_symbols(self) -> u16 {
+impl MeanPrf {
+    pub const fn code_range(self) -> [u8; 2] {
         match self {
-            Self::Symbols4 => 4,
-            Self::Symbols8 => 8,
-            Self::Symbols16 => 16,
-            Self::Symbols32 => 32,
+            MeanPrf::Mhz16 => [1, 8],
+            MeanPrf::Mhz62 => [9, 24],
         }
     }
 }
 
-// TODO: tune performance for Symbols32
-pub fn recommended_pac_length(psr: phy::Psr) -> PreambleAcquisitionChunk {
-    if psr < phy::Psr::Symbols64 {
-        PreambleAcquisitionChunk::Symbols4
-    } else if psr < phy::Psr::Symbols128 {
-        PreambleAcquisitionChunk::Symbols8
-    } else {
-        PreambleAcquisitionChunk::Symbols16
-    }
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum BitRate {
+    /// 0.85 MBit/s for PHR and payload
+    Kbs850,
+    /// 0.85 MBit/s for PHR, 6.81 MBit/s for payload, a.k.a. DRBM_LP
+    Kbs6810,
+    /// 6.81 MBit/s for PHR and payload, a.k.a. DRBM_HP
+    Kbs6810Only,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -245,20 +218,21 @@ impl<'a, IF: Interface> otp::OtpRead for OtpReader<'a, IF> {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct RfConfig {
-    pub channel: DevChannel,
-    pub prf: phy::MeanPrf,
-    pub pac: PreambleAcquisitionChunk,
-    pub psr: phy::Psr,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct ChannelConfig {
-    pub channel: DevChannel,
-    pub sfd_type: phy::SfdType,
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Config {
+    pub channel: Channel,
+    pub prf: MeanPrf,
     pub rx_code: u8,
     pub tx_code: u8,
+    pub rx_psr: phy::Psr,
+    pub pac_size: PacSize,
+    pub sfd_type: SfdType,
+    pub cia_enable: bool,
+    pub bit_rate: BitRate,
+    pub frame_format: FrameFormat,
+    pub correct_tx_fcs: bool,
+    pub tx_power: TxPowerConfig,
 }
 
 struct OtpData {
@@ -325,62 +299,29 @@ impl<IF: Interface> Device<IF> {
         Ok(Self { interface, otp })
     }
 
-    async fn reset_power_up(&mut self) -> Result<(), Error<IF>> {
-        reset_power_up(&mut self.interface).await?;
-
-        // set_event_mask operates with low 4 bytes only
-        // Disable the higher mask
-        // TODO: Add explicit access to higher event mask
-        let mut ral = self.interface.ral();
-        ral.sys_enable_high().write_bytes(0)?;
-        Ok(())
-    }
-
     pub fn shutdown(&mut self) -> Result<(), Error<IF>> {
         self.interface.set_reset().map_err(Error::Interface)
     }
 
-    pub async fn configure(
-        &mut self,
-        run_config: phy::RunConfig,
-        dev_config: &DeviceConfig,
-        pac: PreambleAcquisitionChunk,
-    ) -> Result<(), Error<IF>> {
-        let channel = unwrap!(DevChannel::new(run_config.channel));
-        let channel_config = ChannelConfig {
-            channel,
-            sfd_type: run_config.sfd_type,
-            rx_code: run_config.rx_preamble_code,
-            tx_code: run_config.tx_preamble_code,
-        };
+    pub async fn configure(&mut self, config: Config) -> Result<(), Error<IF>> {
+        reset_power_up(&mut self.interface).await?;
 
-        let base_config = RfConfig {
-            channel,
-            prf: run_config.prf,
-            psr: run_config.psr,
-            pac,
-        };
-
-        self.reset_power_up().await?;
-        self.set_channel(channel_config)?;
+        self.clear_high_event_mask()?;
+        self.set_channel(&config)?;
         self.configure_ldo()?;
         self.configure_bias()?;
         self.configure_xtal_trim()?;
-        self.start_pll(base_config.channel).await?;
-        self.configure_rf(base_config, dev_config)?;
+        self.start_pll(config.channel).await?;
+        self.configure_rf(&config)?;
         self.calibrate_rx().await?;
-        self.set_sfd_timeout(pac, run_config.sfd_type, run_config.psr)?;
+        self.set_sfd_timeout(config.pac_size, config.sfd_type, config.rx_psr)?;
 
         let mut ral = self.interface.ral();
         ral.sys_cfg().write(|w| {
-            w.set_dis_fcs_tx(!run_config.correct_tx_fcs);
-            w.set_phr_mode(if run_config.long_frame_format {
-                regs::PhrMode::LongFrame
-            } else {
-                regs::PhrMode::StandardFrame
-            });
-            w.set_phr_6m8(run_config.bit_rate == phy::BitRate::Kbs6810Only);
-            w.set_cia_ipatov(run_config.ranging);
+            w.set_dis_fcs_tx(!config.correct_tx_fcs);
+            w.set_phr_mode(config.frame_format);
+            w.set_phr_6m8(config.bit_rate == BitRate::Kbs6810Only);
+            w.set_cia_ipatov(config.cia_enable);
             w.set_cia_sts(false);
             w.set_rxwtoe(true); // Receive Wait Timeout Enable
             w.set_cp_spc(regs::StsPocketPosition::NoSts);
@@ -390,20 +331,35 @@ impl<IF: Interface> Device<IF> {
         Ok(())
     }
 
-    fn set_channel(&mut self, config: ChannelConfig) -> Result<(), Error<IF>> {
+    fn clear_high_event_mask(&mut self) -> Result<(), Error<IF>> {
+        let mut ral = self.interface.ral();
+        ral.sys_enable_high().write_bytes(0)?;
+        Ok(())
+    }
+
+    fn set_channel(&mut self, config: &Config) -> Result<(), Error<IF>> {
+        let [min_code, max_code] = config.prf.code_range();
+        assert!(
+            (min_code..=max_code).contains(&config.rx_code),
+            "RX preamble code {} is outside the {:?} range ({}..={})",
+            config.rx_code,
+            config.prf,
+            min_code,
+            max_code,
+        );
+        assert!(
+            (min_code..=max_code).contains(&config.tx_code),
+            "TX preamble code {} is outside the {:?} range ({}..={})",
+            config.tx_code,
+            config.prf,
+            min_code,
+            max_code,
+        );
+
         let mut ral = self.interface.ral();
         ral.chan_ctrl().write(|w| {
-            w.set_rf_chan(match config.channel {
-                DevChannel::Ch5 => regs::Channel::Channel5,
-                DevChannel::Ch9 => regs::Channel::Channel9,
-            });
-            w.set_sfd_type(match config.sfd_type {
-                phy::SfdType::Sfd0 => regs::SfdType::IeeeSfd0,
-                phy::SfdType::Sfd2 => regs::SfdType::IeeeSfd2,
-                phy::SfdType::Sfd1 | phy::SfdType::Sfd3 | phy::SfdType::Sfd4 => {
-                    core::unreachable!()
-                }
-            });
+            w.set_rf_chan(config.channel);
+            w.set_sfd_type(config.sfd_type);
             w.set_tx_pcode(config.tx_code);
             w.set_rx_pcode(config.rx_code);
         })?;
@@ -449,13 +405,13 @@ impl<IF: Interface> Device<IF> {
     }
 
     // TODO: accept lock_code
-    async fn start_pll(&mut self, channel: DevChannel) -> Result<(), Error<IF>> {
+    async fn start_pll(&mut self, channel: Channel) -> Result<(), Error<IF>> {
         const PLL_LOCK_TIMEOUT_US: u32 = 150_000;
 
         let mut ral = self.interface.ral();
         ral.pll_cfg().write_bytes(match channel {
-            DevChannel::Ch5 => 0x1F3C,
-            DevChannel::Ch9 => 0x0F3C,
+            Channel::Ch5 => 0x1F3C,
+            Channel::Ch9 => 0x0F3C,
         })?;
 
         // Note, user manual prescribes such logic, however API skips it
@@ -482,25 +438,18 @@ impl<IF: Interface> Device<IF> {
         Ok(())
     }
 
-    fn configure_rf(
-        &mut self,
-        config: RfConfig,
-        dev_config: &DeviceConfig,
-    ) -> Result<(), Error<IF>> {
+    fn configure_rf(&mut self, config: &Config) -> Result<(), Error<IF>> {
         let mut ral = self.interface.ral();
         if self.otp.rx_tune_set {
             ral.otp_cfg().write(|w| {
-                w.set_dgc_sel(match config.channel {
-                    DevChannel::Ch5 => regs::Channel::Channel5,
-                    DevChannel::Ch9 => regs::Channel::Channel9,
-                });
+                w.set_dgc_sel(config.channel);
                 w.set_dgc_kick(true);
             })?;
         } else {
             ral.dgc_cfg_lut().write(0, &RX_TUNE_DGC_CFG[..8])?;
             let dgc_lut = match config.channel {
-                DevChannel::Ch5 => &RX_TUNE_DGC_LUT_CH5,
-                DevChannel::Ch9 => &RX_TUNE_DGC_LUT_CH9,
+                Channel::Ch5 => &RX_TUNE_DGC_LUT_CH5,
+                Channel::Ch9 => &RX_TUNE_DGC_LUT_CH9,
             };
             ral.dgc_lut().write(0, dgc_lut)?;
         }
@@ -509,7 +458,7 @@ impl<IF: Interface> Device<IF> {
         ral.otp_cfg().write(|w| {
             w.set_ops_sel(
                 // Check DW3000 User Manual section 8.2.12.7 for details
-                if config.psr >= phy::Psr::Symbols256 {
+                if config.rx_psr >= phy::Psr::Symbols256 {
                     regs::ReceiverParameterSet::Long
                 } else {
                     regs::ReceiverParameterSet::Short
@@ -519,17 +468,12 @@ impl<IF: Interface> Device<IF> {
         })?;
 
         ral.dgc_cfg().write(|w| {
-            w.set_rx_tune_en(config.prf == phy::MeanPrf::Mhz62);
+            w.set_rx_tune_en(config.prf == MeanPrf::Mhz62);
             w.set_thr_64(0x32);
         })?;
 
         ral.dtune0().write(|w| {
-            w.set_pac(match config.pac {
-                PreambleAcquisitionChunk::Symbols4 => regs::Pac::Symbols4,
-                PreambleAcquisitionChunk::Symbols8 => regs::Pac::Symbols8,
-                PreambleAcquisitionChunk::Symbols16 => regs::Pac::Symbols16,
-                PreambleAcquisitionChunk::Symbols32 => regs::Pac::Symbols32,
-            });
+            w.set_pac(config.pac_size);
             w.set_dt0b4(true);
         })?;
 
@@ -537,19 +481,19 @@ impl<IF: Interface> Device<IF> {
         ral.dtune3().write_bytes(0xaf5f_35cc)?;
 
         // User manual does not describe this register, however API changes its value
-        if config.channel == DevChannel::Ch9 {
+        if config.channel == Channel::Ch9 {
             ral.rf_rx_ctrl_hi().write_bytes(0x08b5_a833)?;
         }
         ral.rf_tx_ctrl1().write_bytes(0x0e)?;
         ral.rf_tx_ctrl2().write_bytes(match config.channel {
-            DevChannel::Ch5 => 0x1C071134,
-            DevChannel::Ch9 => 0x1C010034,
+            Channel::Ch5 => 0x1C071134,
+            Channel::Ch9 => 0x1C010034,
         })?;
         ral.tx_power().write(|w| {
-            w.set_data_pwr(dev_config.tx_power.data.0);
-            w.set_phr_pwr(dev_config.tx_power.phr.0);
-            w.set_shr_pwr(dev_config.tx_power.shr.0);
-            w.set_sts_pwr(dev_config.tx_power.sts.0);
+            w.set_data_pwr(config.tx_power.data.0);
+            w.set_phr_pwr(config.tx_power.phr.0);
+            w.set_shr_pwr(config.tx_power.shr.0);
+            w.set_sts_pwr(config.tx_power.sts.0);
         })?;
 
         Ok(())
@@ -620,14 +564,14 @@ impl<IF: Interface> Device<IF> {
 
     fn set_sfd_timeout(
         &mut self,
-        pac: PreambleAcquisitionChunk,
-        sfd_type: phy::SfdType,
+        pac_size: PacSize,
+        sfd_type: SfdType,
         max_psr: phy::Psr,
     ) -> Result<(), Error<IF>> {
         // UserManual discourage disabling timeout
         // DW3000 UM, 8.2.7.2
         let max_psr = max_psr.as_symbols();
-        let pac_size = pac.as_symbols();
+        let pac_size = pac_size.as_symbols();
         let sfd_length = sfd_type.as_symbols();
         let symbols = max_psr.max(pac_size) - pac_size + sfd_length + 1;
 
@@ -640,7 +584,7 @@ impl<IF: Interface> Device<IF> {
     pub fn set_tx_config(
         &mut self,
         psr: phy::Psr,
-        bit_rate: phy::BitRate,
+        bit_rate: BitRate,
         ranging: bool,
         length: u16,
     ) -> Result<(), Error<IF>> {
@@ -654,9 +598,8 @@ impl<IF: Interface> Device<IF> {
         ral.tx_fctrl_short().write(|w| {
             w.set_txflen(length);
             w.set_txbr(match bit_rate {
-                phy::BitRate::Kbs850 => regs::BitRate::Kbs850,
-                phy::BitRate::Kbs6810 | phy::BitRate::Kbs6810Only => regs::BitRate::Kbs6810,
-                _ => unreachable!("unsupported bit_rate value {:?}", bit_rate),
+                BitRate::Kbs850 => regs::BitRate::Kbs850,
+                BitRate::Kbs6810 | BitRate::Kbs6810Only => regs::BitRate::Kbs6810,
             });
             w.set_tr(ranging);
             w.set_txpsr(match psr {
@@ -678,10 +621,11 @@ impl<IF: Interface> Device<IF> {
 
     pub fn set_preamble_timeout(
         &mut self,
-        pac: PreambleAcquisitionChunk,
+        pac_size: PacSize,
         timeout: Option<NonZeroU16>,
     ) -> Result<(), Error<IF>> {
-        let preamble_toc = timeout.map_or(0, |count| u16::from(count).div_ceil(pac.as_symbols()));
+        let preamble_toc =
+            timeout.map_or(0, |count| u16::from(count).div_ceil(pac_size.as_symbols()));
         let mut ral = self.interface.ral();
         ral.pre_toc().write_bytes(preamble_toc)?;
         Ok(())
@@ -849,6 +793,17 @@ async fn reset_power_up<IF: Interface>(interface: &mut IF) -> Result<(), Error<I
     Ok(())
 }
 
+// TODO: tune performance for Symbols32
+pub fn recommended_pac_size(psr: phy::Psr) -> PacSize {
+    if psr < phy::Psr::Symbols64 {
+        PacSize::Symbols4
+    } else if psr < phy::Psr::Symbols128 {
+        PacSize::Symbols8
+    } else {
+        PacSize::Symbols16
+    }
+}
+
 async fn check_dev_id<IF: Interface>(interface: &mut IF) -> Result<(), Error<IF>> {
     /// QORVO Register Identification Tag
     const DEV_RIDTAG: u16 = 0xdeca;
@@ -868,4 +823,24 @@ async fn check_dev_id<IF: Interface>(interface: &mut IF) -> Result<(), Error<IF>
         return Err(Error::Device(DeviceError::WrongDevice));
     }
     Ok(())
+}
+
+impl PacSize {
+    const fn as_symbols(self) -> u16 {
+        match self {
+            PacSize::Symbols4 => 4,
+            PacSize::Symbols8 => 8,
+            PacSize::Symbols16 => 16,
+            PacSize::Symbols32 => 32,
+        }
+    }
+}
+
+impl SfdType {
+    pub const fn as_symbols(self) -> u16 {
+        match self {
+            Self::IeeeSfd0 | Self::Decawave8 | Self::IeeeSfd2 => 8,
+            Self::Decawave16 => 16,
+        }
+    }
 }
