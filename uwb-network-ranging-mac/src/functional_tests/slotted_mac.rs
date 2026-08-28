@@ -143,7 +143,7 @@ where
             .await
             .unwrap();
 
-        if let Some(report) = status {
+        if let Ok(report) = status {
             if !report.fcs_good {
                 continue;
             }
@@ -164,7 +164,7 @@ where
                     .await
                     .unwrap();
 
-                if let Some(report) = status {
+                if let Ok(report) = status {
                     psdu.set_length(report.length.into()).unwrap();
                     phy.read_rx_buffer(psdu.as_mut_slice()).await.unwrap();
                     display_slot_report(i, status, psdu.as_slice());
@@ -176,32 +176,36 @@ where
     }
 }
 
-fn display_beacon_report<T>(status: Option<phy::RxReport<T>>, psdu: &[u8]) {
+fn display_beacon_report<T>(status: Result<phy::RxReport<T>, phy::RxError>, psdu: &[u8]) {
     match status {
-        Some(report) => {
+        Ok(report) => {
             if report.fcs_good {
                 info!("Beacon frame: {:02x}", psdu);
             } else {
                 info!("Beacon frame FCS error");
             }
         }
-        None => {
-            info!("Beacon frame timeout");
+        Err(err) => {
+            info!("Beacon frame error: {}", err);
         }
     }
 }
 
-fn display_slot_report<T>(slot_idx: u8, status: Option<phy::RxReport<T>>, psdu: &[u8]) {
+fn display_slot_report<T>(
+    slot_idx: u8,
+    status: Result<phy::RxReport<T>, phy::RxError>,
+    psdu: &[u8],
+) {
     match status {
-        Some(report) => {
+        Ok(report) => {
             if report.fcs_good {
                 info!("Slot {} frame: {:02x}", slot_idx, psdu);
             } else {
                 info!("Slot {} frame FCS error", slot_idx);
             }
         }
-        None => {
-            info!("Slot {} frame timeout", slot_idx);
+        Err(err) => {
+            info!("Slot {} frame error: {}", slot_idx, err);
         }
     }
 }

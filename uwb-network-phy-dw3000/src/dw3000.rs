@@ -61,14 +61,6 @@ impl<IF: Interface> From<device::Error<IF>> for Error<IF::Error, DeviceError> {
     }
 }
 
-const RX_TERMINATION_EVENTS: Events = Events::RXPHE
-    .union(Events::RXFR)
-    .union(Events::RXFSL)
-    .union(Events::RXFTO)
-    .union(Events::RXPTO)
-    .union(Events::RXSTO)
-    .union(Events::ARFE);
-
 // TODO: add XTAL trim option
 #[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -131,7 +123,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
     }
 
     fn max_rx_timeout(&self) -> Duration {
-        device::MAX_RX_TIMEOUT
+        device::MAX_FRAME_TIMEOUT
     }
 
     // TODO: go to sleep instead of shutdown
@@ -343,8 +335,9 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         &mut self,
         start_at: Instant,
         max_preamble_hunt: Option<NonZeroU16>,
-        rx_timeout: Duration,
-    ) -> Result<Option<phy::RxReport<Timebase>>, Error<Self::IoError, Self::DevError>> {
+        frame_timeout: Duration,
+    ) -> Result<Result<phy::RxReport<Timebase>, phy::RxError>, Error<Self::IoError, Self::DevError>>
+    {
         let InnerState::Running(run_data) = self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
@@ -353,14 +346,14 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
         check_start_instant_alignment(start_at)?;
 
-        if rx_timeout > device::MAX_RX_TIMEOUT {
-            return Err(Error::Operation(OpError::ExcessiveRxTimeout(rx_timeout)));
+        if frame_timeout > device::MAX_FRAME_TIMEOUT {
+            return Err(Error::Operation(OpError::ExcessiveRxTimeout(frame_timeout)));
         }
 
         self.device
             .set_preamble_timeout(run_data.pac_size, max_preamble_hunt)?;
         self.device.set_dx_time(start_at)?;
-        self.device.set_rx_frame_timeout(rx_timeout)?;
+        self.device.set_rx_frame_timeout(frame_timeout)?;
 
         self.device.send_command(FastCommand::Drx)?;
         let start_instant = self.device.get_sys_timestamp()?;
@@ -373,15 +366,22 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             return Err(OpError::StartInstantPassed(overtime).into());
         }
 
-        self.device.set_event_mask(RX_TERMINATION_EVENTS)?;
+        // RXSTO does not stop reception
+        const TERMINATION_EVENTS: Events = Events::RXPHE
+            .union(Events::RXFR)
+            .union(Events::RXFSL)
+            .union(Events::RXFTO)
+            .union(Events::RXPTO)
+            .union(Events::ARFE);
+        self.device.set_event_mask(TERMINATION_EVENTS)?;
 
         const _START_DELAY_MAX: Duration = Timebase::PERIOD;
         let start_delay = start_at - start_instant;
 
         const _EVENT_TIMEOUT_US_MAX: u64 = _START_DELAY_MAX
-            .add(device::MAX_RX_TIMEOUT)
+            .add(device::MAX_FRAME_TIMEOUT)
             .div_ceil(HOST_MICROSECOND_MIN);
-        let event_timeout_us = (start_delay + rx_timeout).div_ceil(HOST_MICROSECOND_MIN);
+        let event_timeout_us = (start_delay + frame_timeout).div_ceil(HOST_MICROSECOND_MIN);
 
         const _ASSERT: u64 = u32::MAX as u64 - _EVENT_TIMEOUT_US_MAX;
         let event_timeout_us = unwrap!(u32::try_from(event_timeout_us));
@@ -396,26 +396,51 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         let events = self.device.get_events()?;
         self.device.clear_all_events()?;
 
-        // TODO: Add RX error signalling
+        if events.contains(Events::RXPTO) {
+            return Ok(Err(phy::RxError::PreambleTimeout));
+        }
+
+        if events.contains(Events::RXPHE) {
+            return Ok(Err(phy::RxError::PhrError));
+        }
+
+        if events.contains(Events::RXFSL) {
+            return Ok(Err(phy::RxError::PayloadError));
+        }
+
+        if events.contains(Events::RXFTO) {
+            return Ok(Err(phy::RxError::FrameTimeout));
+        }
+
+        if events.contains(Events::ARFE) {
+            return Ok(Err(phy::RxError::Rejected));
+        }
+
         if !events.contains(Events::RXFR) {
-            return Ok(None);
+            return Err(Error::Device(DeviceError::UnmaskedEvent {
+                mask: TERMINATION_EVENTS,
+                events,
+            }));
         }
 
-        if run_data.config.ranging && !events.contains(Events::CIADONE) {
-            return Ok(None);
-        }
-
+        let cia_is_valid = events.contains(Events::CIADONE);
+        let fcs_good = events.contains(Events::RXFCG);
         let frame_length = self.device.get_rx_frame_length()?;
-        let timestamp = if run_data.config.ranging {
-            self.device.get_fine_rx_timestamp()?
+        let coarse_timestamp = self.device.get_coarse_rx_timestamp()?;
+
+        // load cia anyway to keep stable timings
+        let cia = if run_data.config.ranging {
+            let timestamp = self.device.get_fine_rx_timestamp()?;
+            Some(phy::CiaReport { timestamp })
         } else {
-            self.device.get_coarse_rx_timestamp()?
+            None
         };
 
-        Ok(Some(phy::RxReport {
+        Ok(Ok(phy::RxReport {
             length: frame_length,
-            fcs_good: events.contains(Events::RXFCG),
-            timestamp,
+            fcs_good,
+            timestamp: coarse_timestamp,
+            cia: if cia_is_valid { cia } else { None },
         }))
     }
 }

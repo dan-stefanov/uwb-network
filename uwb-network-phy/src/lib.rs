@@ -425,10 +425,32 @@ impl RunConfig {
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct CiaReport<T> {
+    pub timestamp: time::Instant<T>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RxReport<T> {
     pub length: u16,
     pub fcs_good: bool,
     pub timestamp: time::Instant<T>,
+    pub cia: Option<CiaReport<T>>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum RxError {
+    /// Preamble was not detected during max_preamble_hunt
+    PreambleTimeout,
+    /// Non-recoverable error in PHY header
+    PhrError,
+    /// Non-recoverable error in payload
+    PayloadError,
+    /// Frame was not received within frame_timeout
+    FrameTimeout,
+    /// Frame was rejected by MAC filter
+    Rejected,
 }
 
 #[derive(Debug)]
@@ -522,8 +544,8 @@ pub trait Phy {
         &mut self,
         start_at: time::Instant<Self::Timebase>,
         max_preamble_hunt: Option<NonZeroU16>,
-        timeout: time::Duration,
-    ) -> Result<Option<RxReport<Self::Timebase>>, Error<Self::IoError, Self::DevError>>;
+        frame_timeout: time::Duration,
+    ) -> Result<Result<RxReport<Self::Timebase>, RxError>, Error<Self::IoError, Self::DevError>>;
 }
 
 // See IEEE 802.15.4-2020, Table 15-5

@@ -23,7 +23,7 @@ impl phy::time::CyclicTimebase for Timebase {
 pub type Instant = phy::time::Instant<Timebase>;
 
 const RX_FRAME_TIMEOUT_UNIT: Duration = Duration::CHIP.mul_u32(512);
-pub const MAX_RX_TIMEOUT: Duration = RX_FRAME_TIMEOUT_UNIT.mul_u32((1u32 << 20) - 1);
+pub const MAX_FRAME_TIMEOUT: Duration = RX_FRAME_TIMEOUT_UNIT.mul_u32((1u32 << 20) - 1);
 
 #[rustfmt::skip]
 static RX_TUNE_DGC_CFG: regs::DgcCfgLutData = [
@@ -240,6 +240,7 @@ pub enum DeviceError {
     RxCalibrationFailure,
     TxStateTimeout { timeout_us: u32 },
     RxStateTimeout { timeout_us: u32 },
+    UnmaskedEvent { mask: Events, events: Events },
 }
 
 #[derive(Debug)]
@@ -606,7 +607,7 @@ impl<IF: Interface> Device<IF> {
     }
 
     pub fn set_rx_frame_timeout(&mut self, timeout: Duration) -> Result<(), Error<IF>> {
-        assert!(timeout <= MAX_RX_TIMEOUT);
+        assert!(timeout <= MAX_FRAME_TIMEOUT);
         const UNIT: Duration = RX_FRAME_TIMEOUT_UNIT;
         let counter = timeout.as_ticks().div_ceil(UNIT.as_ticks());
         assert!(counter < 1u64 << 20);

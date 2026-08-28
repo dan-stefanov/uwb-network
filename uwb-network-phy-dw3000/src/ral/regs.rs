@@ -1,6 +1,10 @@
 use super::*;
 use paste::paste;
+
+#[cfg(not(feature = "defmt"))]
 use bitflags::bitflags;
+#[cfg(feature = "defmt")]
+use defmt::bitflags;
 
 
 #[repr(u8)]
@@ -150,7 +154,7 @@ pub enum RxPfr {
 
 
 bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(not(feature = "defmt"), derive(Clone, Copy, Eq, PartialEq, Debug))]
     pub struct EventsLow: u32 {
         /// Aggregate IRQ status, read-only
         const IRQS = 1 << 0;
@@ -214,7 +218,7 @@ bitflags! {
 }
 
 bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(not(feature = "defmt"), derive(Clone, Copy, Eq, PartialEq, Debug))]
     pub struct EventsHigh: u16 {
         /// Receiver preamble rejection
         const RXPREJ = 1 << 1;
@@ -240,7 +244,7 @@ bitflags! {
 }
 
 bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(not(feature = "defmt"), derive(Clone, Copy, Eq, PartialEq, Debug))]
     pub struct BriefEvents: u8 {
         /// TXFRB or TXPRS or TXPHS or TXFRS
         const TXOK = 1 << 0;
@@ -262,14 +266,14 @@ bitflags! {
 }
 
 bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(not(feature = "defmt"), derive(Clone, Copy, Eq, PartialEq, Debug))]
     pub struct CalStatus: u8 {
         const CAL_DONE = 1;
     }
 }
 
 bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(not(feature = "defmt"), derive(Clone, Copy, Eq, PartialEq, Debug))]
     pub struct DbEvents: u8 {
         /// Receiver FCS good
         const RXFCG = 1 << 0;

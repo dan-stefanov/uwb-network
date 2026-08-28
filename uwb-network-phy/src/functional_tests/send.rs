@@ -66,19 +66,18 @@ where
 
         let timestamp = phy.get_timestamp().await.unwrap().schedule_align_up();
 
-        let status = phy.receive(timestamp + RX_DELAY, None, RX_TIMEOUT).await;
+        let status = unwrap!(phy.receive(timestamp + RX_DELAY, None, RX_TIMEOUT).await);
 
         match status {
-            Ok(Some(report)) => {
+            Ok(report) => {
                 psdu.resize(report.length.into(), 0).unwrap();
                 phy.read_rx_buffer(psdu.as_mut_slice()).await.unwrap();
 
                 info!("RX frame: {}, data: {=[u8]:02x}", report, psdu.as_slice());
             }
-            Ok(None) => {
-                info!("RX frame timeout, try again");
+            Err(err) => {
+                info!("RX error: {}", err);
             }
-            Err(err) => panic!("RX error: {:?}", err),
         };
     }
 }
