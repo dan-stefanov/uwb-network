@@ -241,6 +241,7 @@ pub enum DeviceError {
     TxStateTimeout { timeout_us: u32 },
     RxStateTimeout { timeout_us: u32 },
     UnmaskedEvent { mask: Events, events: Events },
+    NoAccumulatedPreambles,
 }
 
 #[derive(Debug)]
@@ -290,6 +291,7 @@ impl<IF: Interface> Device<IF> {
         self.configure_rf(&config)?;
         self.calibrate_rx().await?;
         self.set_sfd_timeout(config.pac_size, config.sfd_type, config.rx_psr)?;
+        self.set_diagnostic_enable(true)?; // cia power access
 
         let mut ral = self.interface.ral();
         ral.sys_cfg().write(|w| {
@@ -443,7 +445,7 @@ impl<IF: Interface> Device<IF> {
         })?;
 
         ral.dgc_cfg().write(|w| {
-            w.set_rx_tune_en(config.prf == MeanPrf::Mhz62);
+            w.set_rx_tune_en(recommended_rx_tune_en(config.prf));
             w.set_thr_64(0x32);
         })?;
 
@@ -553,6 +555,12 @@ impl<IF: Interface> Device<IF> {
         let mut ral = self.interface.ral();
         assert_ne!(symbols, 0);
         ral.rx_sfd_toc().write_bytes(symbols)?;
+        Ok(())
+    }
+
+    fn set_diagnostic_enable(&mut self, value: bool) -> Result<(), Error<IF>> {
+        let mut ral = self.interface.ral();
+        ral.cia_conf_byte2().write(|w| w.set_mindiag(!value))?;
         Ok(())
     }
 
@@ -722,6 +730,46 @@ impl<IF: Interface> Device<IF> {
         Ok(unwrap!(Instant::try_from_ticks(rx_time)))
     }
 
+    pub fn get_first_path_cia_power(&mut self, prf: MeanPrf) -> Result<f32, Error<IF>> {
+        let mut ral = self.interface.ral();
+        let dgc_shift = ral.dgc_dbg().read()?.dgc_decision();
+        let fp1m = ral.ip_diag2().read()?.ip_fp1m();
+        let fp2m = ral.ip_diag3().read()?.ip_fp2m();
+        let fp3m = ral.ip_diag4().read()?.ip_fp3m();
+        let count = ral.ip_diag12().read()?.ip_nacc() << 2; // fp has 2 fractional bits
+
+        let dgc_shift = if recommended_rx_tune_en(prf) {
+            dgc_shift
+        } else {
+            0
+        };
+        let count =
+            NonZeroU16::new(count).ok_or(Error::Device(DeviceError::NoAccumulatedPreambles))?;
+
+        let fp = [fp1m, fp2m, fp3m].map(|x| x << u32::from(dgc_shift));
+        let power = first_path_cia_power(prf, fp, count);
+        Ok(power)
+    }
+
+    pub fn get_full_cia_power(&mut self, prf: MeanPrf) -> Result<f32, Error<IF>> {
+        let mut ral = self.interface.ral();
+        let dgc_shift = ral.dgc_dbg().read()?.dgc_decision();
+        let ir_area = ral.ip_diag1().read()?.ip_crea();
+        let count = ral.ip_diag12().read()?.ip_nacc();
+
+        let dgc_shift = if recommended_rx_tune_en(prf) {
+            dgc_shift
+        } else {
+            0
+        };
+        let count =
+            NonZeroU16::new(count).ok_or(Error::Device(DeviceError::NoAccumulatedPreambles))?;
+
+        let shifted_ir_area = ir_area << u32::from(dgc_shift * 2);
+        let power = full_cia_power(prf, shifted_ir_area, count);
+        Ok(power)
+    }
+
     pub fn read_rx_buffer(&mut self, psdu: &mut [u8]) -> Result<(), Error<IF>> {
         const RX_BUFFER_MAX_SIZE: usize = 1024;
         assert!(psdu.len() <= RX_BUFFER_MAX_SIZE);
@@ -798,6 +846,40 @@ async fn check_dev_id<IF: Interface>(interface: &mut IF) -> Result<(), Error<IF>
         return Err(Error::Device(DeviceError::WrongDevice));
     }
     Ok(())
+}
+
+// DGC_CFG bit derivation according to UG 8.2.4.1
+const fn recommended_rx_tune_en(prf: MeanPrf) -> bool {
+    match prf {
+        MeanPrf::Mhz16 => false,
+        MeanPrf::Mhz62 => true,
+    }
+}
+
+fn lsb_cia_power(prf: MeanPrf) -> f32 {
+    match prf {
+        MeanPrf::Mhz16 => 4.168694e-15,  // -113.8 dBm in W
+        MeanPrf::Mhz62 => 6.7608296e-16, // -121.7 dBm in W
+    }
+}
+
+fn first_path_cia_power(prf: MeanPrf, pf: [u32; 3], n: NonZeroU16) -> f32 {
+    let pf_sq: f32 = pf
+        .into_iter()
+        .map(|x| {
+            let x_fp = x as f32;
+            x_fp * x_fp
+        })
+        .sum();
+    let n_fp = n.get() as f32;
+    lsb_cia_power(prf) * pf_sq / (n_fp * n_fp)
+}
+
+fn full_cia_power(prf: MeanPrf, c: u32, n: NonZeroU16) -> f32 {
+    const SCALE: f32 = (1u32 << 21) as f32;
+    let c_fp = c as f32;
+    let n_fp = n.get() as f32;
+    lsb_cia_power(prf) * SCALE * c_fp / (n_fp * n_fp)
 }
 
 impl PacSize {

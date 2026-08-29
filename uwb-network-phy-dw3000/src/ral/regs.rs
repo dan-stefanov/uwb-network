@@ -286,6 +286,29 @@ bitflags! {
     }
 }
 
+
+bitflags! {
+    #[cfg_attr(not(feature = "defmt"), derive(Clone, Copy, Eq, PartialEq, Debug))]
+    pub struct CiaStatus: u8 {
+        /// No strong rising edge on the first path so estimate is vulnerable to noise
+        const WEAK_EDGE = 1 << 0;
+        /// Noise threshold had to be artificially lowered to find any first path
+        const WEAK_FP = 1 << 1;
+        /// CIR too weak to get any estimate
+        const WEAK_CIR = 1 << 2;
+        /// Coarse first path estimate too close to end to be plausible
+        const LATE_COARSE_FP = 1 << 3;
+        /// First path estimate too close to end to be plausible
+        const LATE_FP = 1 << 4;
+        /// STS channel IR consistency test fail
+        const  STS_CQ_FAIL = 1 << 5;
+        /// STS sequence statistics test fail
+        const  STS_SS_FAIL = 1 << 6;
+        /// STS CIR grow rate consistency test fail
+        const  STS_PGR_FAIL = 1 << 7;
+    }
+}
+
 pub type DgcCfgLutData = [u8; 28];  // 7 x 4 byte words
 pub type DgcLutData = [u8; 28];     // 7 x 4 byte words
 
@@ -322,6 +345,7 @@ reg_field!(0x01, 0x14, 2, ChanCtrl, RW, 0x0006, "Channel control register");
 reg_field!(0x01, 0x24, 1, RdbStatus, RC, (), "RX double buffer status");
 
 reg_field!(0x03, 0x18, 2, DgcCfg, RW, 0xf0f5, "The RX tuning configuration register");
+reg_field!(0x03, 0x63, 1, DgcDbg, RO, (), "Reports DGC information");
 
 reg_field!(0x04, 0x0c, 4, RxCal, RW, 0x0000_0000, "RX calibration block configuration");
 reg_field!(0x04, 0x14, 4, RxCalResi, RW, (), "RX calibration block result I");
@@ -353,6 +377,18 @@ reg_field!(0x0b, 0x08, 2, OtpCfg, RW, 0x0000, "OTP configuration register");
 reg_field!(0x0b, 0x0c, 1, OtpStat, RO, (), "OTP memory programming status register");
 reg_bytes!(0x0b, 0x10, 4, OtpRdata, RO, (), "OTP data read from given address");
 reg_bytes!(0x0b, 0x14, 4, OtpSrdata, RO, (), "OTP Special Register (SR) read data");
+
+
+reg_field!(0x0c, 0x00, 8, IpTs, RO, (), "Preamble receive time stamp and status");
+reg_field!(0x0c, 0x28, 4, IpDiag0, RO, (), "Preamble diagnostic 0");
+reg_field!(0x0c, 0x2C, 3, IpDiag1, RO, (), "Preamble diagnostic 1");
+reg_field!(0x0c, 0x30, 3, IpDiag2, RO, (), "Preamble diagnostic 2");
+reg_field!(0x0c, 0x34, 3, IpDiag3, RO, (), "Preamble diagnostic 3");
+reg_field!(0x0c, 0x38, 3, IpDiag4, RO, (), "Preamble diagnostic 4");
+reg_field!(0x0c, 0x58, 2, IpDiag12, RO, (), "Preamble diagnostic 12");
+
+reg_field!(0x0e, 0x00, 4, CiaConf, RW, 0x0011_4015, "RX antenna delay and CIA diagnostic enable");
+reg_field!(0x0e, 0x02, 1, CiaConfByte2, RW, 0x11, "RX antenna delay and CIA diagnostic enable");
 
 reg_field!(0x0f, 0x30, 4, SysState, RO, (), "System states");
 
@@ -473,6 +509,8 @@ field_bool!(DgcCfg, 0, rx_tune_en, "RX tuning enable bit");
 // bits 1-8 - reserved
 field_prim!(DgcCfg, 9, 14, thr_64, u8, "RX tuning threshold configuration for 64 MHz PRF");
 
+field_prim!(DgcDbg, 4, 7, dgc_decision, u8, "DGC decision index");
+
 field_enum!(RxCal, 0, 2, cal_mode, u8, CalibrationMode, "RX calibration mode");
 field_bool!(RxCal, 4, cal_en, "RX calibration enable");
 field_prim!(RxCal, 16, 20, comp_dly, u8, "RX calibration tuning value");
@@ -529,6 +567,28 @@ field_enum!(OtpCfg, 13, 14, dgc_sel, u8, Channel, "RX_TUNE parameter set selecti
 field_bool!(OtpStat, 0, otp_prog_done, "OTP programming done");
 field_bool!(OtpStat, 1, otp_vpp_ok, "OTP programming voltage OK");
 // bits 2-7 - reserved
+
+field_prim!(IpTs, 0, 40, ip_toa, u64, "Time of Arrival estimate");
+field_prim!(IpTs, 40, 54, ip_poa, u16, "Phase of Arrival estimate");
+field_prim!(IpTs, 56, 61, ip_toast, u8, "Time of Arrival status indicator");
+
+field_prim!(IpDiag0, 0, 21, ip_peaka, u32, "Largest Magnitude");
+field_prim!(IpDiag0, 21, 30, ip_peaki, u16, "Largest Magnitude Index");
+
+field_prim!(IpDiag1, 0, 17, ip_crea, u32, "Channel area");
+
+field_prim!(IpDiag2, 0, 22, ip_fp1m, u32, "Magnitude at FP + 1");
+
+field_prim!(IpDiag3, 0, 22, ip_fp2m, u32, "Magnitude at FP + 2");
+
+field_prim!(IpDiag4, 0, 22, ip_fp3m, u32, "Magnitude at FP + 3");
+
+field_prim!(IpDiag12, 0, 12, ip_nacc, u16, "Number of accumulated preamble symbols");
+
+field_prim!(CiaConf, 0, 16, rxantd, u16, "Receive antenna delay");
+field_bool!(CiaConf, 20, mindiag, "Minimum diagnostics");
+
+field_bool!(CiaConfByte2, 4, mindiag, "Minimum diagnostics");
 
 field_prim!(SysState, 0, 4, tx_state, u8, "Transmit SM state");
 // bits 4-7 - reserved

@@ -73,8 +73,10 @@ pub struct DeviceConfig {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct RunData {
     config: phy::RunConfig,
+    prf: device::MeanPrf,
     bit_rate: device::BitRate,
     pac_size: device::PacSize,
+    cia_successful: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -106,6 +108,36 @@ impl<IF: Interface> Dw3000Phy<IF> {
             dev_config,
             state: InnerState::Stopped,
         })
+    }
+
+    pub fn get_first_path_cia_power(
+        &mut self,
+    ) -> Result<Option<f32>, Error<IF::Error, DeviceError>> {
+        let InnerState::Running(run_data) = self.state else {
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
+        };
+
+        if !run_data.cia_successful {
+            return Ok(None);
+        }
+
+        Ok(Some(self.device.get_first_path_cia_power(run_data.prf)?))
+    }
+
+    pub fn get_full_cia_power(&mut self) -> Result<Option<f32>, Error<IF::Error, DeviceError>> {
+        let InnerState::Running(run_data) = self.state else {
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
+        };
+
+        if !run_data.cia_successful {
+            return Ok(None);
+        }
+
+        Ok(Some(self.device.get_full_cia_power(run_data.prf)?))
     }
 }
 
@@ -144,6 +176,11 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
             .map_err(OpError::UnsupportedConfig)?;
 
         let pac_size = device::recommended_pac_size(run_config.psr);
+        let prf = match run_config.prf {
+            phy::MeanPrf::Mhz16 => device::MeanPrf::Mhz16,
+            phy::MeanPrf::Mhz62 => device::MeanPrf::Mhz62,
+            prf => unreachable!("unexpected PRF: {:?}", prf),
+        };
         let bit_rate = match run_config.bit_rate {
             phy::BitRate::Kbs850 => device::BitRate::Kbs850,
             phy::BitRate::Kbs6810 => device::BitRate::Kbs6810,
@@ -156,11 +193,7 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
                 phy::Channel::CH_9 => device::Channel::Ch9,
                 channel => unreachable!("unexpected channel: {:?}", channel),
             },
-            prf: match run_config.prf {
-                phy::MeanPrf::Mhz16 => device::MeanPrf::Mhz16,
-                phy::MeanPrf::Mhz62 => device::MeanPrf::Mhz62,
-                prf => unreachable!("unexpected PRF: {:?}", prf),
-            },
+            prf,
             rx_code: run_config.rx_preamble_code,
             tx_code: run_config.tx_preamble_code,
             rx_psr: run_config.psr,
@@ -185,8 +218,10 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
 
         self.state = InnerState::Running(RunData {
             config: run_config,
+            prf,
             bit_rate,
             pac_size,
+            cia_successful: false,
         });
 
         Ok(())
@@ -338,11 +373,12 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         frame_timeout: Duration,
     ) -> Result<Result<phy::RxReport<Timebase>, phy::RxError>, Error<Self::IoError, Self::DevError>>
     {
-        let InnerState::Running(run_data) = self.state else {
+        let InnerState::Running(run_data) = &mut self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(
                 self.state.into(),
             )));
         };
+        run_data.cia_successful = false;
 
         check_start_instant_alignment(start_at)?;
 
@@ -426,21 +462,24 @@ impl<IF: Interface> phy::Phy for Dw3000Phy<IF> {
         let cia_is_valid = events.contains(Events::CIADONE);
         let fcs_good = events.contains(Events::RXFCG);
         let frame_length = self.device.get_rx_frame_length()?;
-        let coarse_timestamp = self.device.get_coarse_rx_timestamp()?;
+        let timestamp = self.device.get_coarse_rx_timestamp()?;
 
-        // load cia anyway to keep stable timings
         let cia = if run_data.config.ranging {
-            let timestamp = self.device.get_fine_rx_timestamp()?;
-            Some(phy::CiaReport { timestamp })
+            // load cia anyway to keep stable timings
+            let fine_timestamp = self.device.get_fine_rx_timestamp()?;
+            cia_is_valid.then_some(phy::CiaReport {
+                timestamp: fine_timestamp,
+            })
         } else {
             None
         };
 
+        run_data.cia_successful = cia.is_some();
         Ok(Ok(phy::RxReport {
             length: frame_length,
             fcs_good,
-            timestamp: coarse_timestamp,
-            cia: if cia_is_valid { cia } else { None },
+            timestamp,
+            cia,
         }))
     }
 }
