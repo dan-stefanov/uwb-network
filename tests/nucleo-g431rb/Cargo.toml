@@ -27,6 +27,7 @@ libm = "0.2"
 uwb-network-phy = { version = "0.1.0", path = "../../uwb-network-phy", features = ["defmt", "functional_tests"]}
 uwb-network-phy-dw3000 = { version = "0.1.0", path = "../../uwb-network-phy-dw3000", features = ["defmt"]}
 uwb-network-ranging-mac = { version = "0.1.0", path = "../../uwb-network-ranging-mac", features = ["defmt", "functional_tests"]}
+test-suite = { version = "0.1.0", path = "../test-suite" }
 
 [profile.release]
 debug = 2
