@@ -1,0 +1,12 @@
+[package]
+name = "data-logger"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.44"
+clap = { version = "4.5.54", features = ["derive"] }
+cobs = "0.5.1"
+num-complex = "0.4.6"
+npyz = "0.9.1"
+serialport = { version = "4.10.0", default-features = false }

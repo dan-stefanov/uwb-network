@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+cobs = { version = "0.5.1", default-features = false, features = ["defmt"] }
 embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-16_000_000"] }
+embedded-io-async = "0.7.0"
 
 defmt = "1.0.1"
 heapless = { version = "0.9.2", default-features = false }
