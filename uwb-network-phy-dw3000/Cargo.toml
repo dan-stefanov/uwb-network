@@ -13,6 +13,7 @@ defmt = { version = "1.0.1", optional = true }
 paste = { version = "1.0.15" }
 bitflags = { version = "2.5.0" }
 embassy-futures = { version = "0.1.2" }
+num-complex = { version = "0.4.6", default-features = false }
 
 [features]
 defmt = ["dep:defmt", "uwb-network-phy/defmt"]

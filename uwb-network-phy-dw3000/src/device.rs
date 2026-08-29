@@ -1,8 +1,9 @@
 use crate::interface::Interface;
 use crate::otp;
 use crate::phy::{self, time::Duration};
-use crate::ral::{self, RegisterAccess, regs};
+use crate::ral::{self, File, RegisterAccess, regs};
 use core::num::NonZeroU16;
+use num_complex::Complex;
 
 pub use regs::{Channel, EventsLow as Events, FrameFormat, PacSize, SfdType};
 
@@ -787,6 +788,37 @@ impl<IF: Interface> Device<IF> {
         ral.tx_buffer().write_fast(psdu)?;
         Ok(())
     }
+
+    pub fn read_cir_sample(&mut self, index: u16) -> Result<Complex<i32>, Error<IF>> {
+        const IPATOV_CIA_SIZE: u16 = 1024;
+        assert!(index <= IPATOV_CIA_SIZE);
+
+        let mut ral = self.interface.ral();
+        ral.clk_ctrl().modify(|w| {
+            w.set_acc_clk_en(true);
+            w.set_acc_mclk_en(true);
+        })?;
+
+        ral.ptr_addr_b().write(|w| {
+            w.set_ptrb_base(regs::AccMem::FILE_ID.into());
+        })?;
+
+        ral.ptr_offset_b().write(|w| {
+            w.set_ptrb_ofs(index);
+        })?;
+
+        let mut buf = [0u8; 1 + 3 + 3];
+        ral.indirect_ptr_b().read_fast(&mut buf)?;
+        let sample_i = i32::from_le_bytes([0, buf[1], buf[2], buf[3]]) >> 8;
+        let sample_q = i32::from_le_bytes([0, buf[4], buf[5], buf[6]]) >> 8;
+
+        ral.clk_ctrl().modify(|w| {
+            w.set_acc_clk_en(false);
+            w.set_acc_mclk_en(false);
+        })?;
+
+        Ok(Complex::new(sample_i, sample_q))
+    }
 }
 
 async fn reset_power_up<IF: Interface>(interface: &mut IF) -> Result<(), Error<IF>> {
@@ -824,6 +856,13 @@ pub fn recommended_pac_size(psr: phy::Psr) -> PacSize {
         PacSize::Symbols8
     } else {
         PacSize::Symbols16
+    }
+}
+
+pub const fn cir_length(prf: MeanPrf) -> u16 {
+    match prf {
+        MeanPrf::Mhz16 => 992,
+        MeanPrf::Mhz62 => 1016,
     }
 }
 

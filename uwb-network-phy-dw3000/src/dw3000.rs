@@ -2,6 +2,7 @@ use crate::device::{self, DeviceError, Events, FastCommand, Instant, Timebase};
 use crate::interface::Interface;
 use crate::phy::{self, Error, OpError, time::CyclicTimebase, time::Duration};
 use core::num::NonZeroU16;
+use num_complex::Complex;
 
 pub use device::Error as InitError;
 
@@ -138,6 +139,41 @@ impl<IF: Interface> Dw3000Phy<IF> {
         }
 
         Ok(Some(self.device.get_full_cia_power(run_data.prf)?))
+    }
+
+    pub fn get_cir_length(&mut self) -> Result<Option<u16>, Error<IF::Error, DeviceError>> {
+        let InnerState::Running(run_data) = self.state else {
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
+        };
+
+        if !run_data.cia_successful {
+            return Ok(None);
+        }
+
+        Ok(Some(device::cir_length(run_data.prf)))
+    }
+
+    pub fn get_cir_sample(
+        &mut self,
+        index: u16,
+    ) -> Result<Option<Complex<i32>>, Error<IF::Error, DeviceError>> {
+        let InnerState::Running(run_data) = self.state else {
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
+        };
+
+        if !run_data.cia_successful {
+            return Ok(None);
+        }
+
+        if index >= device::cir_length(run_data.prf) {
+            return Ok(None);
+        }
+
+        Ok(Some(self.device.read_cir_sample(index)?))
     }
 }
 
