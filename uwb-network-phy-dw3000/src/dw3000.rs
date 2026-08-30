@@ -141,6 +141,20 @@ impl<IF: Interface> Dw3000Phy<IF> {
         Ok(Some(self.device.get_full_cia_power(run_data.prf)?))
     }
 
+    pub fn get_first_path_energy(&mut self) -> Result<Option<u64>, Error<IF::Error, DeviceError>> {
+        let InnerState::Running(run_data) = self.state else {
+            return Err(Error::Operation(OpError::ProhibitedInCurrentState(
+                self.state.into(),
+            )));
+        };
+
+        if !run_data.cia_successful {
+            return Ok(None);
+        }
+
+        Ok(Some(self.device.get_first_path_energy(run_data.prf)?))
+    }
+
     pub fn get_cir_length(&mut self) -> Result<Option<u16>, Error<IF::Error, DeviceError>> {
         let InnerState::Running(run_data) = self.state else {
             return Err(Error::Operation(OpError::ProhibitedInCurrentState(

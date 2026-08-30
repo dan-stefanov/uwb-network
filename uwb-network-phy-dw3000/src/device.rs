@@ -752,6 +752,28 @@ impl<IF: Interface> Device<IF> {
         Ok(power)
     }
 
+    pub fn get_first_path_energy(&mut self, prf: MeanPrf) -> Result<u64, Error<IF>> {
+        let mut ral = self.interface.ral();
+        let dgc_shift = ral.dgc_dbg().read()?.dgc_decision();
+        let fp1m = ral.ip_diag2().read()?.ip_fp1m();
+        let fp2m = ral.ip_diag3().read()?.ip_fp2m();
+        let fp3m = ral.ip_diag4().read()?.ip_fp3m();
+
+        let dgc_shift = if recommended_rx_tune_en(prf) {
+            dgc_shift
+        } else {
+            0
+        };
+
+        let fp_sq: u64 = [fp1m, fp2m, fp3m]
+            .into_iter()
+            .map(u64::from)
+            .map(|x| x * x)
+            .sum();
+        let power = fp_sq << (2 * dgc_shift);
+        Ok(power)
+    }
+
     pub fn get_full_cia_power(&mut self, prf: MeanPrf) -> Result<f32, Error<IF>> {
         let mut ral = self.interface.ral();
         let dgc_shift = ral.dgc_dbg().read()?.dgc_decision();

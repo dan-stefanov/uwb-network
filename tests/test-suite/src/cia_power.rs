@@ -62,10 +62,12 @@ where
                 if report.cia.is_some() {
                     let full_power = unwrap!(unwrap!(phy.get_full_cia_power()));
                     let first_path_power = unwrap!(unwrap!(phy.get_first_path_cia_power()));
+                    let first_path_energy = unwrap!(unwrap!(phy.get_first_path_energy()));
                     info!(
-                        "Pull CIR power: {:?} dBm, first-path power: {:?} dBm",
+                        "Pull CIR power: {:?} dBm, first-path power: {:?} dBm, acc energy {:?}",
                         watts_to_dbm(full_power),
                         watts_to_dbm(first_path_power),
+                        first_path_energy,
                     );
                 }
             }
