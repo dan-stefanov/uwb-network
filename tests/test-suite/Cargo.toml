@@ -7,6 +7,7 @@ edition = "2024"
 cobs = { version = "0.5.1", default-features = false, features = ["defmt"] }
 embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-16_000_000"] }
 embedded-io-async = "0.7.0"
+bnum = { version = "0.14.4", default-features = false }
 
 defmt = "1.0.1"
 heapless = { version = "0.9.2", default-features = false }
